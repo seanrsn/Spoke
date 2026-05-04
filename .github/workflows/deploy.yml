@@ -1,0 +1,97 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: brooklynbikery.com
+  CLOUDFRONT_ID: E3A6Y3SPOMYKVP
+
+jobs:
+  deploy-lambdas:
+    name: Deploy Lambda functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Package and deploy each Lambda
+        run: |
+          set -e
+
+          # Map: source file -> AWS function name -> needs pymysql?
+          declare -A FUNCTIONS=(
+            ["Admin-Dashboard.py"]="AdminDashboard:1"
+            ["Backend-Form.py"]="SubmitBackendForm:1"
+            ["Customer-Form.py"]="SubmitCustomerForm:1"
+            ["Send-SMS.py"]="SendSMS:0"
+          )
+
+          for SRC in "${!FUNCTIONS[@]}"; do
+            IFS=':' read -r FN_NAME NEEDS_PYMYSQL <<< "${FUNCTIONS[$SRC]}"
+            echo ""
+            echo "📦 Packaging $SRC -> $FN_NAME"
+
+            BUILD_DIR=$(mktemp -d)
+            cp "$SRC" "$BUILD_DIR/lambda_function.py"
+
+            if [ "$NEEDS_PYMYSQL" = "1" ]; then
+              pip install pymysql==1.1.1 -t "$BUILD_DIR" --quiet
+            fi
+
+            ZIP="/tmp/${FN_NAME}.zip"
+            (cd "$BUILD_DIR" && zip -rq "$ZIP" . -x "*.pyc" "__pycache__/*" "*.dist-info/*")
+
+            echo "   Deploying to $FN_NAME ($(du -h "$ZIP" | cut -f1))"
+            aws lambda update-function-code \
+              --function-name "$FN_NAME" \
+              --zip-file "fileb://$ZIP" \
+              --region "$AWS_REGION" \
+              --output text \
+              --query 'LastUpdateStatus'
+
+            rm -rf "$BUILD_DIR" "$ZIP"
+          done
+
+  deploy-frontend:
+    name: Sync frontend to S3 + invalidate CloudFront
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync HTML/JS/JSON to S3
+        run: |
+          # Only sync the files actually served — keep S3 images/videos untouched
+          for f in *.html *.js *.json; do
+            [ -f "$f" ] || continue
+            aws s3 cp "$f" "s3://${S3_BUCKET}/$f" --region "$AWS_REGION"
+          done
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$CLOUDFRONT_ID" \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text
