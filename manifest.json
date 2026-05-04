@@ -1,0 +1,16 @@
+{
+  "name": "Brooklyn Bikery Admin",
+  "short_name": "Bikery Admin",
+  "description": "Admin dashboard for Brooklyn Bikery",
+  "start_url": "/admin-dashboard.html",
+  "display": "standalone",
+  "background_color": "#667eea",
+  "theme_color": "#667eea",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "131x131",
+      "type": "image/png"
+    }
+  ]
+}

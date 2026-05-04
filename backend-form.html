@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Brooklyn Bikery - Service Entry</title>
+
+  <link rel="icon" type="image/png" sizes="512x512" href="https://brooklynbikery.com/favicon.png">
+  <link rel="icon" type="image/x-icon" href="https://brooklynbikery.com/favicon.ico">
+  <link rel="apple-touch-icon" href="https://brooklynbikery.com/favicon.png">
+
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: linear-gradient(135deg, #5b6fcc 0%, #6e83f5 100%);
+      background-attachment: fixed;
+      padding: 2rem 1rem;
+      min-height: 100vh;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Lucide icon defaults */
+    [data-lucide] {
+      display: inline-block;
+      vertical-align: middle;
+      stroke-width: 2;
+    }
+    .icon-lg [data-lucide] { width: 56px; height: 56px; }
+    .icon-md [data-lucide] { width: 22px; height: 22px; }
+    .icon-sm [data-lucide] { width: 16px; height: 16px; }
+
+    .login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .login-box {
+      background: white;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 3rem 2.5rem;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      animation: slideUp 0.4s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .login-box h2 {
+      font-size: 1.9rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      letter-spacing: -0.4px;
+      background: linear-gradient(135deg, #1a1d29 0%, #5b6fcc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .login-box p { color: #666; margin-bottom: 2rem; font-size: 1rem; }
+
+    .login-form { display: flex; flex-direction: column; gap: 1rem; }
+
+    .login-form input {
+      padding: 1rem;
+      font-size: 1.05rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-family: 'Outfit', sans-serif;
+      transition: all 0.3s ease;
+    }
+
+    .login-form input:focus {
+      outline: none;
+      border-color: #5b6fcc;
+      box-shadow: 0 0 0 4px rgba(91, 111, 204, 0.1);
+    }
+
+    .login-form button {
+      padding: 1rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #5b6fcc 0%, #6e83f5 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: 'Outfit', sans-serif;
+      box-shadow: 0 4px 15px rgba(91, 111, 204, 0.4);
+      margin-top: 0.5rem;
+    }
+
+    .login-form button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(91, 111, 204, 0.5);
+    }
+
+    .login-form button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .error-message {
+      background: #fee;
+      color: #c33;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      display: none;
+      border: 1px solid #fcc;
+    }
+
+    .error-message.show { display: block; }
+
+    .main-app { display: none; }
+    .main-app.active { display: block; }
+
+    /* Top Header Bar (static, scrolls with page) */
+    .top-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      margin: -2rem -1rem 1.5rem -1rem;
+    }
+
+    .form-switcher {
+      display: flex;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .form-switcher a {
+      padding: 0.45rem 0.9rem;
+      border-radius: 9px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-decoration: none;
+      color: rgba(255, 255, 255, 0.85);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .form-switcher a:hover {
+      color: white;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .form-switcher a.active {
+      background: white;
+      color: #5b6fcc;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    }
+
+    .form-switcher a .icon {
+      font-size: 0.9rem;
+      display: inline-flex;
+      align-items: center;
+    }
+    .form-switcher a .icon [data-lucide] {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.4;
+    }
+
+    .logout-btn {
+      background: rgba(255, 255, 255, 0.15);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      padding: 0.45rem 1rem;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.8rem;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .header-section { text-align: center; margin-bottom: 2rem; }
+
+    .header-section h2 {
+      font-size: 2.1rem;
+      font-weight: 700;
+      color: white;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.25);
+      letter-spacing: -0.4px;
+      margin: 0;
+    }
+
+    .lookup-box {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      padding: 1.5rem;
+      max-width: 600px;
+      margin: 0 auto 1.5rem auto;
+    }
+
+    .lookup-box label {
+      display: block;
+      margin-bottom: 1rem;
+      font-weight: 600;
+      color: #333;
+    }
+    .lookup-box label [data-lucide],
+    .update-customer-grid label [data-lucide] {
+      width: 16px;
+      height: 16px;
+      color: #5b6fcc;
+      stroke-width: 2.2;
+      vertical-align: -3px;
+      margin-right: 0.35rem;
+    }
+    .mode-toggle-btn [data-lucide] {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.6;
+      vertical-align: -2px;
+      margin-right: 0.25rem;
+    }
+    .nc-badge [data-lucide] {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.6;
+      vertical-align: -2px;
+      margin-right: 0.3rem;
+    }
+    .logout-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .logout-btn [data-lucide] {
+      width: 14px;
+      height: 14px;
+      stroke-width: 2.4;
+    }
+
+    .lookup-box input {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      font-size: 1rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      margin-top: 0.5rem;
+      transition: all 0.3s ease;
+      background: #fafafa;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .lookup-box input:focus {
+      outline: none;
+      border-color: #5b6fcc;
+      box-shadow: 0 0 0 4px rgba(91, 111, 204, 0.1);
+      background: white;
+    }
+
+    /* Update Customer Info Section */
+    .update-customer-section {
+      margin-top: 1rem;
+      border: 2px solid #e8ebff;
+      border-radius: 12px;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .update-customer-section:hover {
+      border-color: #c5cdff;
+    }
+
+    .update-customer-section.expanded {
+      border-color: #5b6fcc;
+      background: linear-gradient(135deg, #f8f9ff 0%, #f0f3ff 100%);
+    }
+
+    .update-customer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.875rem 1rem;
+      cursor: pointer;
+      background: #f8f9ff;
+      transition: all 0.3s ease;
+      user-select: none;
+    }
+
+    .update-customer-header:hover {
+      background: #f0f3ff;
+    }
+
+    .update-customer-section.expanded .update-customer-header {
+      background: transparent;
+      border-bottom: 2px solid #e8ebff;
+    }
+
+    .update-customer-title {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 600;
+      color: #5b6fcc;
+      font-size: 0.95rem;
+    }
+
+    .update-customer-title .icon {
+      font-size: 1.1rem;
+      display: inline-flex;
+      align-items: center;
+    }
+    .update-customer-title .icon [data-lucide] {
+      width: 18px;
+      height: 18px;
+      color: #5b6fcc;
+      stroke-width: 2.2;
+    }
+
+    .update-customer-arrow {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #5b6fcc 0%, #6e83f5 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      transition: all 0.3s ease;
+      box-shadow: 0 2px 6px rgba(91, 111, 204, 0.35);
+    }
+    .update-customer-arrow [data-lucide] {
+      width: 16px;
+      height: 16px;
+      stroke-width: 2.6;
+    }
+
+    .update-customer-section.expanded .update-customer-arrow {
+      transform: rotate(180deg);
+      background: #4d62b8;
+    }
+
+    .update-customer-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+    }
+
+    .update-customer-section.expanded .update-customer-body {
+      max-height: 300px;
+      padding: 1rem;
+    }
+
+    .update-customer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .update-customer-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      font-weight: 600;
+      color: #444;
+      font-size: 0.9rem;
+    }
+
+    .update-customer-grid input {
+      padding: 0.75rem 1rem;
+      font-size: 0.95rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-family: 'Outfit', sans-serif;
+      transition: all 0.3s ease;
+      background: white;
+    }
+
+    .update-customer-grid input:focus {
+      outline: none;
+      border-color: #5b6fcc;
+      box-shadow: 0 0 0 3px rgba(91, 111, 204, 0.1);
+    }
+
+    .update-customer-grid input::placeholder {
+      color: #aaa;
+    }
+
+    .service-section {
+      background: white;
+      border-radius: 24px;
+      padding: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    .category {
+      border: 2px solid #e8ebff;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      background: #f8f9ff;
+      transition: all 0.3s ease;
+    }
+
+    .category:hover {
+      border-color: #5b6fcc;
+      background: #f0f3ff;
+    }
+
+    .category legend {
+      font-weight: 700;
+      padding: 0 0.75rem;
+      color: #5b6fcc;
+      font-size: 1.1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .category legend [data-lucide] {
+      width: 20px;
+      height: 20px;
+      color: #5b6fcc;
+      stroke-width: 2.2;
+    }
+
+    .category label {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+      font-size: 1.05rem;
+      cursor: pointer;
+    }
+
+    .category input[type="checkbox"] {
+      width: 1.5rem;
+      height: 1.5rem;
+      accent-color: #5b6fcc;
+    }
+
+    .category input[type="number"],
+    .category input[type="text"] {
+      padding: 0.6rem;
+      font-size: 1rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .two-column-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .column-header {
+      font-weight: 700;
+      color: #5b6fcc;
+      font-size: 1rem;
+      padding: 0.5rem;
+      text-align: center;
+      background: rgba(91, 111, 204, 0.1);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+    }
+
+    .service-column { display: flex; flex-direction: column; }
+
+    .spoke-input-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+    }
+
+    .spoke-input-row input[type="number"] {
+      width: 80px;
+      height: 2.5em;
+    }
+
+    .custom-service-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .price-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .price-input-wrapper::before {
+      content: '$';
+      position: absolute;
+      left: 1rem;
+      font-weight: 600;
+      color: #5b6fcc;
+    }
+
+    .price-input-wrapper input { padding-left: 2rem !important; }
+
+    .category textarea {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-family: 'Outfit', sans-serif;
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    .submit-wrapper {
+      text-align: center;
+      margin: 2rem auto;
+      max-width: 900px;
+    }
+
+    .submit-wrapper button {
+      font-size: 1.2rem;
+      padding: 1rem 3rem;
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: 'Outfit', sans-serif;
+      box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+    }
+
+    .submit-wrapper button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
+    }
+
+    .submit-wrapper button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    .overlay.show { display: flex; }
+
+    .popup {
+      background: white;
+      padding: 2.5rem 3rem;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      text-align: center;
+      width: 420px;
+      animation: slideUp 0.4s ease-out;
+    }
+
+    .popup .heading-with-checks {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .popup .checkmark, .popup .xmark {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .popup .checkmark {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      box-shadow: 0 8px 20px rgba(40,167,69,0.35);
+    }
+    .popup .xmark {
+      background: linear-gradient(135deg, #dc3545 0%, #e63946 100%);
+      box-shadow: 0 8px 20px rgba(220,53,69,0.35);
+    }
+    .popup .checkmark [data-lucide],
+    .popup .xmark [data-lucide] {
+      width: 30px;
+      height: 30px;
+      color: white;
+      stroke-width: 2.6;
+    }
+
+    .popup h3 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .popup p { font-size: 1.05rem; color: #666; line-height: 1.6; }
+
+    #successOverlay h3 {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    #errorOverlay h3 {
+      background: linear-gradient(135deg, #dc3545 0%, #e63946 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    #errorReason { font-size: 0.95rem; margin-top: 1rem; color: #555; }
+
+    @media (max-width: 768px) {
+      body { padding: 1rem 0.5rem; }
+      .login-box { padding: 2rem 1.5rem; }
+      h2 { font-size: 1.6rem; }
+      .lookup-box { padding: 1.25rem; }
+      .lookup-box > div:first-child { grid-template-columns: 1fr !important; }
+      .update-customer-grid { grid-template-columns: 1fr !important; }
+      .service-section { padding: 1.25rem; }
+      .category { padding: 1rem; }
+      .category label { font-size: 0.95rem; }
+      .two-column-grid { grid-template-columns: 1fr; }
+      .custom-service-row { grid-template-columns: 1fr; }
+      .submit-wrapper button { width: 100%; font-size: 1rem; }
+      .top-header { padding: 0.5rem 0.75rem; margin: -1rem -0.5rem 1rem -0.5rem; }
+      .form-switcher a { padding: 0.35rem 0.6rem; font-size: 0.7rem; gap: 0.25rem; }
+      .form-switcher a .icon { font-size: 0.8rem; }
+      .logout-btn { padding: 0.35rem 0.7rem; font-size: 0.7rem; }
+    }
+
+    /* ── New Customer mode ───────────────────────────────────── */
+    .mode-toggle-btn {
+      background: #5b6fcc;
+      color: white;
+      border: none;
+      padding: 0.55rem 1.15rem;
+      border-radius: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-family: 'Outfit', sans-serif;
+      transition: all 0.3s ease;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(91, 111, 204, 0.35);
+      white-space: nowrap;
+    }
+    .mode-toggle-btn:hover { background: #4d62b8; transform: translateY(-1px); }
+    .mode-toggle-btn.nc-active {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      box-shadow: 0 2px 8px rgba(40, 167, 69, 0.35);
+    }
+    .nc-badge {
+      display: none;
+    }
+    #newCustomerSection { display: none; }
+    #newCustomerSection label { margin-bottom: 0; display: block; }
+    #newCustomerSection label + label { margin-top: 0.5rem; }
+    #newCustomerSection input { border-color: #28a745; background: #f0fff4; }
+    #newCustomerSection input:focus {
+      border-color: #20c997;
+      box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.1);
+      background: white;
+    }
+    .lookup-bottom-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    @media (max-width: 768px) {
+      .lookup-bottom-row { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+      .lookup-bottom-row .mode-toggle-btn { text-align: center; width: 100%; }
+      .nc-hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <h2>Brooklyn Bikery</h2>
+    <p>Service Entry Access</p>
+    <form class="login-form" id="loginForm">
+      <input type="password" id="passwordInput" placeholder="Enter password" autocomplete="current-password" required>
+      <div class="error-message" id="errorMessage">Incorrect password. Please try again.</div>
+      <button type="submit">Login</button>
+    </form>
+  </div>
+</div>
+
+<!-- Main App -->
+<div class="main-app" id="mainApp">
+  <!-- Top Header Bar -->
+  <div class="top-header">
+    <div class="form-switcher">
+      <a href="backend-form.html" class="active"><span class="icon"><i data-lucide="wrench"></i></span> Service Entry</a>
+      <a href="admin-dashboard.html"><span class="icon"><i data-lucide="layout-dashboard"></i></span> Dashboard</a>
+    </div>
+    <button class="logout-btn" onclick="logout()"><i data-lucide="log-out"></i> Logout</button>
+  </div>
+
+  <div class="overlay" id="successOverlay">
+    <div class="popup">
+      <div class="heading-with-checks">
+        <span class="checkmark"><i data-lucide="check"></i></span>
+      </div>
+      <h3>Successfully Submitted!</h3>
+      <p>Service entry saved and customer notified.<br><br><strong>Brooklyn Bikery</strong><br>Ride with confidence, and a smile!</p>
+    </div>
+  </div>
+
+  <div class="overlay" id="errorOverlay">
+    <div class="popup">
+      <div class="heading-with-checks">
+        <span class="xmark"><i data-lucide="x"></i></span>
+      </div>
+      <h3>Oops! Something Went Wrong</h3>
+      <div id="errorReason"></div>
+    </div>
+  </div>
+
+  <div class="header-section">
+    <h2>Service Entry</h2>
+  </div>
+
+  <form id="serviceForm">
+    <div class="lookup-box">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1rem;">
+        <label><i data-lucide="bike"></i>Bike Description:
+          <input type="text" name="bikeDescription" placeholder="e.g., Blue E-Bike">
+        </label>
+
+        <!-- Right column: existing phone OR new customer fields -->
+        <div>
+          <div id="existingPhoneSection">
+            <label><i data-lucide="phone"></i>Customer's Phone (for lookup):
+              <input type="text" name="lookupPhone" id="lookupPhone" placeholder="Enter phone number">
+            </label>
+          </div>
+          <div id="newCustomerSection">
+            <label><i data-lucide="user"></i>Name:
+              <input type="text" id="ncName" placeholder="Customer name" autocomplete="off">
+            </label>
+            <label><i data-lucide="phone"></i>Phone:
+              <input type="text" id="ncPhone" placeholder="(555) 000-0000" autocomplete="off">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom row: existing controls + mode toggle button -->
+      <div class="lookup-bottom-row">
+        <div id="existingControls" style="flex: 1;">
+          <div class="update-customer-section" id="updateCustomerSection">
+            <div class="update-customer-header" onclick="toggleCustomerBox()">
+              <div class="update-customer-title">
+                <span class="icon"><i data-lucide="pencil"></i></span>
+                <span>Update Customer Info</span>
+              </div>
+              <div class="update-customer-arrow"><i data-lucide="chevron-down"></i></div>
+            </div>
+            <div class="update-customer-body">
+              <div class="update-customer-grid">
+                <label>
+                  <span><i data-lucide="user"></i>New Name</span>
+                  <input type="text" name="name" placeholder="Enter new name">
+                </label>
+                <label>
+                  <span><i data-lucide="smartphone"></i>New Phone</span>
+                  <input type="text" name="phone" placeholder="Enter new phone">
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode toggle (always visible) -->
+        <button type="button" id="modeToggleBtn" onclick="toggleMode()" class="mode-toggle-btn"><i data-lucide="plus"></i>New Order</button>
+      </div>
+    </div>
+
+    <div class="service-section">
+      <fieldset class="category">
+        <legend><i data-lucide="cable"></i>Flats & Cables</legend>
+        <div class="two-column-grid">
+          <div class="service-column">
+            <div class="column-header">FRONT</div>
+            <label><input type="checkbox" data-service="Front Flat ($25)"> Flat ($25)</label>
+            <label><input type="checkbox" data-service="Front Flat E-Bike ($45)"> Flat E-Bike ($45)</label>
+            <label><input type="checkbox" data-service="Replace Front Brake Line ($25)"> Replace Brake Line ($25)</label>
+            <label><input type="checkbox" data-service="Replace Front Gear Line ($25)"> Replace Gear Line ($25)</label>
+          </div>
+          <div class="service-column">
+            <div class="column-header">REAR</div>
+            <label><input type="checkbox" data-service="Rear Flat ($25)"> Flat ($25)</label>
+            <label><input type="checkbox" data-service="Rear Flat E-Bike ($45)"> Flat E-Bike ($45)</label>
+            <label><input type="checkbox" data-service="Replace Rear Brake Line ($25)"> Replace Brake Line ($25)</label>
+            <label><input type="checkbox" data-service="Replace Rear Gear Line ($25)"> Replace Gear Line ($25)</label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="disc"></i>Brake Services</legend>
+        <div class="two-column-grid">
+          <div class="service-column">
+            <div class="column-header">FRONT</div>
+            <label><input type="checkbox" data-service="Front Brake Adj ($20)"> Brake Adj ($20)</label>
+            <label><input type="checkbox" data-service="Front Brake Adj E-Bike ($35)"> Brake Adj E-Bike ($35)</label>
+            <label><input type="checkbox" data-service="Front Replace V-Brake Pads ($10)"> Replace V-Brake Pads ($10)</label>
+            <label><input type="checkbox" data-service="Front New V-Brake Pads ($15)"> New V-Brake Pads ($15)</label>
+            <label><input type="checkbox" data-service="Front Replace Disc Brake Pads ($15)"> Replace Disc Pads ($15)</label>
+            <label><input type="checkbox" data-service="Front New Disc Brake Pads ($20)"> New Disc Pads ($20)</label>
+            <label><input type="checkbox" data-service="Front Hydraulic Brake Bleed ($50)"> Hydraulic Brake Bleed ($50)</label>
+          </div>
+          <div class="service-column">
+            <div class="column-header">REAR</div>
+            <label><input type="checkbox" data-service="Rear Brake Adj ($20)"> Brake Adj ($20)</label>
+            <label><input type="checkbox" data-service="Rear Brake Adj E-Bike ($35)"> Brake Adj E-Bike ($35)</label>
+            <label><input type="checkbox" data-service="Rear Replace V-Brake Pads ($10)"> Replace V-Brake Pads ($10)</label>
+            <label><input type="checkbox" data-service="Rear New V-Brake Pads ($15)"> New V-Brake Pads ($15)</label>
+            <label><input type="checkbox" data-service="Rear Replace Disc Brake Pads ($15)"> Replace Disc Pads ($15)</label>
+            <label><input type="checkbox" data-service="Rear New Disc Brake Pads ($20)"> New Disc Pads ($20)</label>
+            <label><input type="checkbox" data-service="Rear Hydraulic Brake Bleed ($50)"> Hydraulic Brake Bleed ($50)</label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="cog"></i>Drivetrain</legend>
+        <label><input type="checkbox" data-service="Tune-Up ($100)"> Tune-Up ($100)</label>
+        <label><input type="checkbox" data-service="Replace Cassette/Freewheel ($15)"> Replace Cassette/Freewheel ($15)</label>
+        <label><input type="checkbox" data-service="New Bottom Bracket ($45)"> New Bottom Bracket ($45)</label>
+        <label><input type="checkbox" data-service="Replace Chain ($15)"> Replace Chain ($15)</label>
+        <label><input type="checkbox" data-service="Replace Crank/BB ($30)"> Replace Crank/BB ($30)</label>
+        <label><input type="checkbox" data-service="Front Derailleur Adj ($20)"> Front Derailleur Adj ($20)</label>
+        <label><input type="checkbox" data-service="Rear Derailleur Adj ($20)"> Rear Derailleur Adj ($20)</label>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="disc-3"></i>Wheels & Spokes</legend>
+        <div class="two-column-grid">
+          <div class="service-column">
+            <div class="column-header">FRONT</div>
+            <label><input type="checkbox" data-service="Front Wheel Truing ($20)"> Wheel Truing ($20)</label>
+            <label><input type="checkbox" data-service="Replace Front Rotor ($15)"> Replace Rotor ($15)</label>
+            <label><input type="checkbox" data-service="Front Repack Wheel ($25)"> Repack Wheel ($25)</label>
+            <div class="spoke-input-row">
+              <input type="number" name="frontSpokes" min="0" placeholder="0">
+              <span>Fix Spokes ($35 first, $2 each additional)</span>
+            </div>
+          </div>
+          <div class="service-column">
+            <div class="column-header">REAR</div>
+            <label><input type="checkbox" data-service="Rear Wheel Truing ($20)"> Wheel Truing ($20)</label>
+            <label><input type="checkbox" data-service="Replace Rear Rotor ($15)"> Replace Rotor ($15)</label>
+            <label><input type="checkbox" data-service="Rear Repack Wheel ($25)"> Repack Wheel ($25)</label>
+            <div class="spoke-input-row">
+              <input type="number" name="rearSpokes" min="0" placeholder="0">
+              <span>Fix Spokes ($35 first, $2 each additional)</span>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="wrench"></i>Other Services</legend>
+        <label><input type="checkbox" data-service="Repack Headset ($25)"> Repack Headset ($25)</label>
+        <label><input type="checkbox" data-service="Repack Headset E-Bike ($35)"> Repack Headset E-Bike ($35)</label>
+        <label><input type="checkbox" data-service="E-Bike Diagnostic ($40)"> E-Bike Diagnostic ($40)</label>
+        <label><input type="checkbox" data-service="Bike Assembly ($100)"> Bike Assembly ($100)</label>
+        <label><input type="checkbox" data-service="E-Bike Assembly ($150)"> E-Bike Assembly ($150)</label>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="sparkles"></i>Custom Service</legend>
+        <div class="custom-service-row">
+          <input type="text" name="customDescription" placeholder="Description (e.g., Replace pedals)">
+          <div class="price-input-wrapper">
+            <input type="number" name="customPrice" min="0" step="0.01" placeholder="0.00">
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="category">
+        <legend><i data-lucide="file-text"></i>Notes</legend>
+        <label>
+          <textarea id="notes" name="notes" rows="4" placeholder="Add any notes about this service..."></textarea>
+        </label>
+      </fieldset>
+    </div>
+
+    <div class="submit-wrapper">
+      <button type="submit">Submit Service</button>
+    </div>
+  </form>
+</div>
+
+<script>
+// ============================================
+// API CONFIGURATION
+// ============================================
+const API_ADMIN = 'https://rqshavktfa.execute-api.us-east-1.amazonaws.com/stage/AdminDashboard';
+const API_SERVICES = 'https://rysf6hggs6.execute-api.us-east-1.amazonaws.com/stage/submitservices';
+
+// ============================================
+// TOKEN MANAGEMENT
+// ============================================
+function getToken() { return sessionStorage.getItem('bikeryToken'); }
+function setToken(token) { sessionStorage.setItem('bikeryToken', token); }
+function clearToken() { sessionStorage.removeItem('bikeryToken'); }
+
+function isLoggedIn() {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp > Math.floor(Date.now() / 1000);
+  } catch { return false; }
+}
+
+// ============================================
+// AUTHENTICATED FETCH
+// ============================================
+async function authFetch(url, options = {}) {
+  const token = getToken();
+  if (!token) throw new Error('Not authenticated');
+  
+  const headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+  const response = await fetch(url, { ...options, headers });
+  
+  if (response.status === 401) {
+    clearToken();
+    showLoginScreen();
+    throw new Error('Session expired');
+  }
+  return response;
+}
+
+// ============================================
+// LOGIN
+// ============================================
+document.getElementById('loginForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const password = document.getElementById('passwordInput').value;
+  const errorMsg = document.getElementById('errorMessage');
+  const submitBtn = this.querySelector('button[type="submit"]');
+  
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Logging in...';
+  errorMsg.classList.remove('show');
+  
+  try {
+    const response = await fetch(API_ADMIN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', password })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.token) {
+      setToken(data.token);
+      showMainApp();
+    } else {
+      errorMsg.textContent = data.error || 'Invalid password. Please try again.';
+      errorMsg.classList.add('show');
+      document.getElementById('passwordInput').value = '';
+      document.getElementById('passwordInput').focus();
+    }
+  } catch (error) {
+    errorMsg.textContent = 'Connection error. Please try again.';
+    errorMsg.classList.add('show');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Login';
+  }
+});
+
+// ============================================
+// SCREEN MANAGEMENT
+// ============================================
+function showLoginScreen() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('mainApp').classList.remove('active');
+}
+
+function showMainApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('mainApp').classList.add('active');
+  setMode(true);
+  loadLatestPhone();
+}
+
+function logout() {
+  clearToken();
+  showLoginScreen();
+  document.getElementById('serviceForm').reset();
+}
+
+// ============================================
+// MAIN APP
+// ============================================
+async function loadLatestPhone() {
+  const urlParams = new URLSearchParams(window.location.search);
+
+  // If URL has a phone param (e.g. coming from admin dashboard), switch to Edit Existing mode
+  if (urlParams.get('phone')) {
+    setMode(false);
+    document.getElementById('lookupPhone').value = urlParams.get('phone');
+  }
+  if (urlParams.get('name')) {
+    document.querySelector('input[name="name"]').value = urlParams.get('name');
+    document.getElementById('updateCustomerSection').classList.add('expanded');
+  }
+  if (urlParams.get('bike')) document.querySelector('input[name="bikeDescription"]').value = urlParams.get('bike');
+  if (urlParams.get('notes')) document.getElementById('notes').value = urlParams.get('notes');
+  if (urlParams.get('frontSpokes')) document.querySelector('input[name="frontSpokes"]').value = urlParams.get('frontSpokes');
+  if (urlParams.get('rearSpokes')) document.querySelector('input[name="rearSpokes"]').value = urlParams.get('rearSpokes');
+  if (urlParams.get('customDesc')) document.querySelector('input[name="customDescription"]').value = urlParams.get('customDesc');
+  if (urlParams.get('customPrice')) document.querySelector('input[name="customPrice"]').value = urlParams.get('customPrice');
+
+  urlParams.getAll('service').forEach(service => {
+    const cb = document.querySelector(`input[data-service="${service}"]`);
+    if (cb) cb.checked = true;
+  });
+}
+
+// ============================================
+// NEW CUSTOMER MODE — defaults to New Order (creating a new customer);
+// click the toggle to switch to Edit mode (looking up an existing customer).
+// ============================================
+let isNewCustomerMode = true;
+
+function toggleMode() { setMode(!isNewCustomerMode); }
+
+function setMode(newCustomer) {
+  isNewCustomerMode = newCustomer;
+  document.getElementById('existingPhoneSection').style.display = newCustomer ? 'none' : 'block';
+  document.getElementById('newCustomerSection').style.display = newCustomer ? 'block' : 'none';
+  document.getElementById('existingControls').style.display = newCustomer ? 'none' : 'block';
+  const btn = document.getElementById('modeToggleBtn');
+  if (newCustomer) {
+    btn.innerHTML = '<i data-lucide="pencil"></i>Edit Existing';
+    document.getElementById('ncName').value = '';
+    document.getElementById('ncPhone').value = '';
+  } else {
+    btn.innerHTML = '<i data-lucide="plus"></i>New Order';
+    reloadLatestPhone();
+  }
+  if (window.lucide) lucide.createIcons();
+}
+
+async function reloadLatestPhone() {
+  try {
+    const res = await authFetch(API_SERVICES);
+    const result = await res.json();
+    if (result.phone) document.getElementById('lookupPhone').value = result.phone;
+  } catch (e) { console.error('Failed to reload phone:', e); }
+}
+
+function toggleCustomerBox() {
+  const section = document.getElementById('updateCustomerSection');
+  section.classList.toggle('expanded');
+}
+
+const successOverlay = document.getElementById('successOverlay');
+const errorOverlay = document.getElementById('errorOverlay');
+const errorReason = document.getElementById('errorReason');
+
+successOverlay.addEventListener('click', () => successOverlay.classList.remove('show'));
+errorOverlay.addEventListener('click', () => errorOverlay.classList.remove('show'));
+
+document.getElementById('serviceForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Submitting...';
+
+  // Validate required fields
+  if (isNewCustomerMode) {
+    const ncName = document.getElementById('ncName').value.trim();
+    const ncPhone = document.getElementById('ncPhone').value.trim();
+    if (!ncName || !ncPhone) {
+      showError('Please enter the customer name and phone number.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit Service';
+      return;
+    }
+  } else if (!document.querySelector('input[name="lookupPhone"]').value.trim()) {
+    showError('Please enter a phone number to look up the customer.');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Service';
+    return;
+  }
+
+  const formData = {
+    name: isNewCustomerMode ? document.getElementById('ncName').value.trim() : document.querySelector('input[name="name"]').value,
+    phone: isNewCustomerMode ? document.getElementById('ncPhone').value.trim() : document.querySelector('input[name="phone"]').value,
+    lookupPhone: isNewCustomerMode ? '' : document.querySelector('input[name="lookupPhone"]').value,
+    isNewCustomer: isNewCustomerMode,
+    bikeDescription: document.querySelector('input[name="bikeDescription"]').value.trim(),
+    services: [],
+    frontSpokes: 0,
+    rearSpokes: 0,
+    notes: document.getElementById("notes").value.trim(),
+    customDescription: '',
+    customPrice: 0
+  };
+
+  document.querySelectorAll('.category input[type="checkbox"]').forEach(cb => {
+    if (cb.checked && cb.hasAttribute('data-service')) {
+      formData.services.push(cb.getAttribute('data-service'));
+    }
+  });
+
+  const frontSpokesInput = document.querySelector('input[name="frontSpokes"]');
+  if (frontSpokesInput?.value && parseInt(frontSpokesInput.value) > 0) {
+    formData.frontSpokes = parseInt(frontSpokesInput.value);
+  }
+
+  const rearSpokesInput = document.querySelector('input[name="rearSpokes"]');
+  if (rearSpokesInput?.value && parseInt(rearSpokesInput.value) > 0) {
+    formData.rearSpokes = parseInt(rearSpokesInput.value);
+  }
+
+  const customDesc = document.querySelector('input[name="customDescription"]').value.trim();
+  const customPrice = parseFloat(document.querySelector('input[name="customPrice"]').value) || 0;
+  if (customDesc && customPrice > 0) {
+    formData.customDescription = customDesc;
+    formData.customPrice = customPrice;
+  }
+
+  try {
+    const res = await authFetch(API_SERVICES, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData)
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (res.ok && result.message === "Success") {
+      successOverlay.classList.add('show');
+      e.target.reset();
+      setTimeout(() => successOverlay.classList.remove('show'), 4000);
+
+      if (isNewCustomerMode) {
+        setMode(false); // exit new customer mode and reload latest phone
+      } else {
+        try {
+          const phoneRes = await authFetch(API_SERVICES);
+          const phoneResult = await phoneRes.json();
+          if (phoneResult.phone) document.getElementById('lookupPhone').value = phoneResult.phone;
+        } catch {}
+      }
+    } else {
+      showError(result.message || result.error || "Unknown error.");
+    }
+  } catch (err) {
+    if (err.message === 'Session expired') showError("Session expired. Please log in again.");
+    else showError("An unexpected error occurred.");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Service';
+  }
+
+  function showError(msg) {
+    successOverlay.classList.remove('show');
+    errorReason.innerText = msg;
+    errorOverlay.classList.add('show');
+  }
+});
+
+// ============================================
+// INITIALIZE — must be at the END of the script so all `let` declarations
+// (e.g. isNewCustomerMode) are initialized before showMainApp/setMode run.
+// ============================================
+(function() {
+  if (isLoggedIn()) showMainApp();
+  else showLoginScreen();
+  if (window.lucide) lucide.createIcons();
+})();
+</script>
+</body>
+</html>

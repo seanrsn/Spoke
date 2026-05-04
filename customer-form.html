@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Brooklyn Bikery Service Form</title>
+  
+  <link rel="icon" type="image/png" sizes="512x512" href="/favicon.png">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+    }
+    
+    html, body { 
+      height: 100%; 
+      width: 100%; 
+      font-family: 'Outfit', sans-serif; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background-attachment: fixed;
+    }
+    
+    body { 
+      display: flex; 
+      justify-content: center; 
+      align-items: flex-start; 
+      padding: 2rem 1rem; 
+      min-height: 100vh; 
+    }
+    
+    .form-container { 
+      background: white;
+      padding: 2.5rem; 
+      border-radius: 20px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      width: 100%; 
+      max-width: 520px; 
+      margin: auto;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .header-section {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .bike-emoji {
+      font-size: 3rem;
+      margin-bottom: 0.5rem;
+      animation: wiggle 2s ease-in-out infinite;
+    }
+
+    @keyframes wiggle {
+      0%, 100% { transform: rotate(0deg); }
+      25% { transform: rotate(-5deg); }
+      75% { transform: rotate(5deg); }
+    }
+    
+    h2 { 
+      font-size: 1.8rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 0.95rem;
+      font-weight: 400;
+    }
+    
+    .form-field { 
+      margin-bottom: 1.5rem; 
+    }
+    
+    .form-field label { 
+      display: block; 
+      margin-bottom: 0.5rem; 
+      font-weight: 600; 
+      color: #333;
+      font-size: 0.95rem;
+    }
+    
+    input, textarea { 
+      width: 100%; 
+      padding: 0.875rem 1rem; 
+      border: 2px solid #e0e0e0; 
+      border-radius: 12px; 
+      font-size: 1rem; 
+      font-family: 'Outfit', sans-serif;
+      transition: all 0.3s ease;
+      background: #fafafa;
+    }
+    
+    input:focus, textarea:focus { 
+      outline: none; 
+      border-color: #667eea; 
+      box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+      background: white;
+      transform: translateY(-2px);
+    }
+    
+    textarea { 
+      resize: vertical; 
+      min-height: 120px; 
+    }
+    
+    .checkbox-field { 
+      display: flex; 
+      align-items: flex-start; 
+      gap: 0.75rem; 
+      margin-bottom: 1.25rem;
+      padding: 1rem;
+      background: #f8f9ff;
+      border-radius: 12px;
+      border: 2px solid #e8ebff;
+      transition: all 0.2s ease;
+    }
+
+    .checkbox-field:hover {
+      border-color: #667eea;
+      background: #f0f3ff;
+    }
+    
+    .checkbox-field input[type="checkbox"] { 
+      width: auto; 
+      margin: 0; 
+      margin-top: 0.25rem; 
+      transform: scale(1.3); 
+      accent-color: #667eea;
+      cursor: pointer;
+    }
+    
+    .checkbox-field label { 
+      margin: 0; 
+      font-weight: 500; 
+      font-size: 0.9rem; 
+      line-height: 1.5; 
+      color: #444; 
+      cursor: pointer; 
+      flex: 1; 
+    }
+    
+    .checkbox-field a { 
+      color: #667eea; 
+      text-decoration: none;
+      font-weight: 600;
+      border-bottom: 1px solid transparent;
+      transition: border-bottom 0.2s ease;
+    }
+
+    .consent-error {
+      background: #fee;
+      color: #c33;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      margin-bottom: 1rem;
+      display: none;
+      border: 1px solid #fcc;
+      text-align: center;
+    }
+
+    .consent-error.show {
+      display: block;
+      animation: shake 0.4s ease;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-5px); }
+      40%, 80% { transform: translateX(5px); }
+    }
+
+    .disclaimer a {
+      color: #999;
+      text-decoration: underline;
+      font-weight: 400;
+    }
+
+    .disclaimer a:hover {
+      color: #667eea;
+    }
+
+    .disclaimer {
+      background: transparent;
+      border: none;
+      padding: 0.5rem 0;
+      margin-top: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .disclaimer label {
+      font-size: 0.8rem;
+      color: #999;
+      font-weight: 400;
+      line-height: 1.6;
+    }
+    
+    button { 
+      width: 100%; 
+      padding: 1rem 1.5rem; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; 
+      border: none; 
+      border-radius: 12px; 
+      font-size: 1.1rem; 
+      font-weight: 700; 
+      cursor: pointer; 
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:hover { 
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+
+    button:active {
+      transform: translateY(0px);
+    }
+    
+    button:disabled { 
+      background: #ccc;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+    
+    .overlay { 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      background: rgba(0,0,0,0.5); 
+      backdrop-filter: blur(10px); 
+      display: none; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 999; 
+    }
+    
+    .overlay.show { 
+      display: flex; 
+    }
+    
+    .popup { 
+      background: white; 
+      padding: 2.5rem 3rem; 
+      border-radius: 24px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      text-align: center; 
+      width: 420px; 
+      animation: slideUp 0.4s ease-out;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .popup .heading-with-checks { 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      gap: 1rem; 
+      margin-bottom: 1rem; 
+    }
+    
+    .popup .checkmark { 
+      font-size: 2rem; 
+    }
+    
+    .popup .xmark { 
+      font-size: 2rem; 
+    }
+    
+    .popup h3 { 
+      font-size: 1.8rem; 
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    
+    .popup p { 
+      font-size: 1.05rem; 
+      color: #666; 
+      line-height: 1.6;
+    }
+    
+    #successOverlay h3 { 
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    #errorOverlay h3 { 
+      background: linear-gradient(135deg, #dc3545 0%, #e63946 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    #errorReason { 
+      font-size: 0.95rem; 
+      margin-top: 1rem; 
+      color: #555;
+      line-height: 1.5;
+    }
+    
+    @keyframes slideUp { 
+      from { 
+        opacity: 0; 
+        transform: translateY(30px) scale(0.95); 
+      } 
+      to { 
+        opacity: 1; 
+        transform: translateY(0) scale(1); 
+      } 
+    }
+    
+    @media (max-width: 768px) {
+      body { 
+        padding: 1rem 0.5rem; 
+      }
+      
+      .form-container { 
+        padding: 2rem 1.5rem;
+        border-radius: 16px;
+      }
+
+      h2 {
+        font-size: 1.6rem;
+      }
+
+      .bike-emoji {
+        font-size: 2.5rem;
+      }
+      
+      .popup { 
+        width: 90%; 
+        max-width: 350px; 
+        padding: 2rem 1.5rem;
+        border-radius: 20px;
+      }
+
+      button {
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay" id="successOverlay">
+    <div class="popup">
+      <div class="heading-with-checks">
+        <span class="checkmark">✅</span>
+        <span class="checkmark">✅</span>
+      </div>
+      <h3>Successfully Submitted!</h3>
+      <p>We've got your info and will be in touch soon.<br><br><strong>Brooklyn Bikery</strong><br>Ride with confidence, and a smile! 🚴</p>
+    </div>
+  </div>
+
+  <div class="overlay" id="errorOverlay">
+    <div class="popup">
+      <div class="heading-with-checks">
+        <span class="xmark">❌</span>
+        <span class="xmark">❌</span>
+      </div>
+      <h3>Oops! Something Went Wrong</h3>
+      <div id="errorReason"></div>
+    </div>
+  </div>
+
+  <form class="form-container" id="bikeForm">
+    <div class="header-section">
+      <div class="bike-emoji">🚴</div>
+      <h2>Brooklyn Bikery</h2>
+      <p class="subtitle">Brooklyn's fastest pit stop!</p>
+    </div>
+
+    <div class="form-field">
+      <label>Full Name:</label>
+      <input type="text" name="name" placeholder="Enter your full name" required />
+    </div>
+
+    <div class="form-field">
+      <label>Phone Number:</label>
+      <input type="text" name="phone" placeholder="Enter your phone number" required />
+    </div>
+
+<input type="text" name="website" style="display:none" tabindex="-1" autocomplete="off" />
+
+    <div class="form-field">
+      <label>How Can We Help Today? 🔧</label>
+      <textarea name="notes" placeholder="Tell us what brings you in (e.g., Flat tire, Tune-up)"></textarea>
+    </div>
+
+    <div class="checkbox-field">
+      <input type="checkbox" id="serviceConsent" name="serviceConsent" />
+      <label for="serviceConsent">
+        <strong>Yes!</strong> Text me updates about my order status.
+      </label>
+    </div>
+
+    <div class="checkbox-field">
+      <input type="checkbox" id="marketingConsent" name="marketingConsent" />
+      <label for="marketingConsent">
+        <strong>Yes!</strong> Send me exclusive deals and offers.
+      </label>
+    </div>
+
+    <div class="consent-error" id="consentError">
+      Please check all boxes to continue.
+    </div>
+
+    <div class="disclaimer">
+      <label>
+        Message and data rates may apply. Reply STOP to cancel, HELP for help, or contact 
+        <a href="mailto:brooklynbikery@gmail.com">brooklynbikery@gmail.com</a> or 
+        <a href="tel:17182184464">(718) 218-4464</a>. 
+        By submitting, you acknowledge our 
+        <a href="https://brooklynbikery.com/terms.html" target="_blank" rel="noopener">Terms &amp; Conditions</a> 
+        and 
+        <a href="https://brooklynbikery.com/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.
+      </label>
+    </div>
+
+    <button type="submit" id="submitBtn">Submit Form</button>
+  </form>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const form = document.getElementById('bikeForm');
+      const submitBtn = document.getElementById('submitBtn');
+      const successOverlay = document.getElementById('successOverlay');
+      const errorOverlay = document.getElementById('errorOverlay');
+      const errorReason = document.getElementById('errorReason');
+      const serviceConsent = document.getElementById('serviceConsent');
+      const marketingConsent = document.getElementById('marketingConsent');
+      const consentError = document.getElementById('consentError');
+
+      // Hide consent error when checkboxes change
+      serviceConsent.addEventListener('change', hideConsentError);
+      marketingConsent.addEventListener('change', hideConsentError);
+
+      function hideConsentError() {
+        if (serviceConsent.checked && marketingConsent.checked) {
+          consentError.classList.remove('show');
+        }
+      }
+
+      // Click overlay to close
+      successOverlay.addEventListener('click', function() {
+        this.classList.remove('show');
+      });
+
+      errorOverlay.addEventListener('click', function() {
+        this.classList.remove('show');
+      });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        // Custom validation for checkboxes
+        if (!serviceConsent.checked || !marketingConsent.checked) { 
+          consentError.classList.remove('show');
+          void consentError.offsetWidth; // Force reflow for animation
+          consentError.classList.add('show');
+          consentError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return; 
+        }
+        
+        consentError.classList.remove('show');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
+
+        const formData = new FormData(form);
+        const encoded = new URLSearchParams(formData);
+
+        try {
+          const res = await fetch('https://pp7s8cgqke.execute-api.us-east-1.amazonaws.com/stage/SubmitCustomerForm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: encoded
+          });
+
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data.message === "Success") {
+              successOverlay.classList.add('show');
+              errorOverlay.classList.remove('show');
+              form.reset();
+            } else {
+              showError(data.message || "Unknown error occurred.");
+            }
+          } else {
+            const text = await res.text();
+            showError(text || "Server error occurred.");
+          }
+        } catch {
+          showError("Network error. Please check your connection and try again.");
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit Form';
+        }
+      });
+
+      function showError(message) {
+        successOverlay.classList.remove('show');
+        errorReason.textContent = message;
+        errorOverlay.classList.add('show');
+      }
+    });
+  </script>
+</body>
+</html>
