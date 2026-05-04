@@ -2,7 +2,9 @@ name: Deploy to AWS
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'claude/**'
   pull_request:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
@@ -13,28 +15,56 @@ env:
   CLOUDFRONT_ID: E3A6Y3SPOMYKVP
 
 jobs:
-  auto-merge:
-    name: Auto-merge claude.ai PR
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'claude/')
+  prepare:
+    name: Merge claude.ai changes into main (if needed)
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      should_deploy: ${{ steps.decide.outputs.should_deploy }}
     steps:
+      - name: Decide what to do
+        id: decide
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ startsWith(github.head_ref, 'claude/') }}" == "true" ]]; then
+            echo "mode=merge_pr" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/heads/claude/') }}" == "true" ]]; then
+            echo "mode=merge_branch" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "mode=passthrough" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "mode=passthrough" >> $GITHUB_OUTPUT
+          else
+            echo "mode=skip" >> $GITHUB_OUTPUT
+          fi
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        if: steps.decide.outputs.mode == 'merge_branch'
+        with:
+          fetch-depth: 0
+
+      - name: Merge claude branch into main
+        if: steps.decide.outputs.mode == 'merge_branch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git merge --no-ff "origin/${{ github.ref_name }}" -m "Auto-merge ${{ github.ref_name }}"
+          git push origin main
+          git push origin --delete "${{ github.ref_name }}" || true
+
       - name: Merge PR into main
+        if: steps.decide.outputs.mode == 'merge_pr'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge --squash --delete-branch ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
 
   deploy-lambdas:
     name: Deploy Lambda functions
-    needs: [auto-merge]
-    if: |
-      always() && (
-        github.event_name == 'push' ||
-        github.event_name == 'workflow_dispatch' ||
-        needs.auto-merge.result == 'success'
-      )
+    needs: [prepare]
+    if: needs.prepare.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +87,6 @@ jobs:
         run: |
           set -e
 
-          # Map: source file -> AWS function name -> needs pymysql?
           declare -A FUNCTIONS=(
             ["Admin-Dashboard.py"]="AdminDashboard:1"
             ["Backend-Form.py"]="SubmitBackendForm:1"
@@ -93,13 +122,8 @@ jobs:
 
   deploy-frontend:
     name: Sync frontend to S3 + invalidate CloudFront
-    needs: [auto-merge]
-    if: |
-      always() && (
-        github.event_name == 'push' ||
-        github.event_name == 'workflow_dispatch' ||
-        needs.auto-merge.result == 'success'
-      )
+    needs: [prepare]
+    if: needs.prepare.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,7 +139,6 @@ jobs:
 
       - name: Sync HTML/JS/JSON to S3
         run: |
-          # Only sync the files actually served — keep S3 images/videos untouched
           for f in *.html *.js *.json; do
             [ -f "$f" ] || continue
             aws s3 cp "$f" "s3://${S3_BUCKET}/$f" --region "$AWS_REGION"
