@@ -357,7 +357,7 @@ def lambda_handler(event, context):
             "Replace Front Brake Line ($25)": ("replace_front_brake_line", 25),
             "Replace Rear Brake Line ($25)": ("replace_rear_brake_line", 25),
             "Replace Front Gear Line ($25)": ("replace_front_gear_line", 25),
-            "Rear Gear Line ($25)": ("replace_rear_gear_line", 25),
+            "Replace Rear Gear Line ($25)": ("replace_rear_gear_line", 25),
             "Front Wheel Truing ($20)": ("front_wheel_true", 20),
             "Rear Wheel Truing ($20)": ("rear_wheel_true", 20),
             "Replace Front Rotor ($15)": ("replace_front_rotor", 15),
