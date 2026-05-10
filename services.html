@@ -141,12 +141,12 @@
             <h3 class="font-bold text-gray-900 mb-4">What's included:</h3>
             <ul class="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-gray-700 text-sm">
               <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Full bike inspection</span></li>
-              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Front &amp; rear brake adjustment</span></li>
-              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Front &amp; rear derailleur tuning</span></li>
+              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Cable tension check</span></li>
+              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Derailleur tuning</span></li>
               <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Drivetrain clean &amp; lube</span></li>
-              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Front &amp; rear wheel truing</span></li>
+              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Wheel truing</span></li>
               <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Tire pressure &amp; wear check</span></li>
-              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Bolt torque check (stem, seat, etc.)</span></li>
+              <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Brake adjustment</span></li>
               <li class="flex items-start gap-2"><i data-lucide="check" class="w-4 h-4 text-brand-600 mt-1 shrink-0" stroke-width="2.5"></i><span>Wipe-down &amp; degrease</span></li>
             </ul>
             <p class="text-xs text-gray-500 mt-5">E-bike tune-ups available too — same scope, plus a basic e-system check.</p>
@@ -167,17 +167,6 @@
 
       <div class="grid lg:grid-cols-2 gap-6">
 
-        <!-- Flats & Tubes -->
-        <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm">
-          <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
-            <i data-lucide="circle-dot" class="w-6 h-6 text-brand-500" stroke-width="1.75"></i>
-            <h3 class="font-bold text-gray-900 text-lg">Flats &amp; Tubes</h3>
-          </div>
-          <ul class="divide-y divide-gray-100 text-sm">
-            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Flat repair (front or rear)</span><span class="font-semibold text-gray-900">$25</span></li>
-          </ul>
-        </div>
-
         <!-- Brakes -->
         <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm">
           <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
@@ -186,8 +175,8 @@
           </div>
           <ul class="divide-y divide-gray-100 text-sm">
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Brake adjustment (per wheel)</span><span class="font-semibold text-gray-900">$20</span></li>
-            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">V-brake pads (parts + labor)</span><span class="font-semibold text-gray-900">$25</span></li>
-            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Disc brake pads (parts + labor)</span><span class="font-semibold text-gray-900">$35</span></li>
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Replace V-brake pads</span><span class="font-semibold text-gray-900">$25</span></li>
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Replace disc brake pads</span><span class="font-semibold text-gray-900">$35</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Hydraulic brake bleed</span><span class="font-semibold text-gray-900">$50</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Replace brake line</span><span class="font-semibold text-gray-900">$25</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Replace rotor</span><span class="font-semibold text-gray-900">$15</span></li>
@@ -209,13 +198,14 @@
           </ul>
         </div>
 
-        <!-- Wheels & Bearings -->
+        <!-- Wheels, Tubes & Bearings -->
         <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm">
           <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
             <i data-lucide="loader" class="w-6 h-6 text-brand-500" stroke-width="1.75"></i>
-            <h3 class="font-bold text-gray-900 text-lg">Wheels &amp; Bearings</h3>
+            <h3 class="font-bold text-gray-900 text-lg">Wheels, Tubes &amp; Bearings</h3>
           </div>
           <ul class="divide-y divide-gray-100 text-sm">
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Flat tire repair</span><span class="font-semibold text-gray-900">$25</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Wheel truing (per wheel)</span><span class="font-semibold text-gray-900">$20</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Repack wheel hub</span><span class="font-semibold text-gray-900">$25</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Repack headset</span><span class="font-semibold text-gray-900">$25</span></li>
@@ -223,19 +213,29 @@
           </ul>
         </div>
 
-        <!-- E-Bike & Assembly -->
-        <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm lg:col-span-2">
+        <!-- E-Bike Service -->
+        <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm">
           <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
             <i data-lucide="zap" class="w-6 h-6 text-brand-500" stroke-width="1.75"></i>
-            <h3 class="font-bold text-gray-900 text-lg">E-Bike Service &amp; Assembly</h3>
+            <h3 class="font-bold text-gray-900 text-lg">E-Bike Service</h3>
           </div>
-          <ul class="divide-y divide-gray-100 text-sm sm:grid sm:grid-cols-2 sm:divide-y-0">
-            <li class="px-6 py-3 flex justify-between border-b border-gray-100 sm:border-b sm:border-r"><span class="text-gray-700">E-bike diagnostic (motor / battery / display)</span><span class="font-semibold text-gray-900">$40</span></li>
-            <li class="px-6 py-3 flex justify-between border-b border-gray-100"><span class="text-gray-700">E-bike flat repair</span><span class="font-semibold text-gray-900">$45</span></li>
-            <li class="px-6 py-3 flex justify-between border-b border-gray-100 sm:border-r"><span class="text-gray-700">E-bike brake adjustment (per wheel)</span><span class="font-semibold text-gray-900">$35</span></li>
-            <li class="px-6 py-3 flex justify-between border-b border-gray-100"><span class="text-gray-700">E-bike headset repack</span><span class="font-semibold text-gray-900">$35</span></li>
-            <li class="px-6 py-3 flex justify-between sm:border-r"><span class="text-gray-700">Bike assembly (new bike from box)</span><span class="font-semibold text-gray-900">$100</span></li>
+          <ul class="divide-y divide-gray-100 text-sm">
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">E-bike diagnostic (motor / battery / display)</span><span class="font-semibold text-gray-900">$40</span></li>
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">E-bike flat repair</span><span class="font-semibold text-gray-900">$45</span></li>
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">E-bike brake adjustment (per wheel)</span><span class="font-semibold text-gray-900">$35</span></li>
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">E-bike headset repack</span><span class="font-semibold text-gray-900">$35</span></li>
             <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">E-bike assembly (new e-bike from box)</span><span class="font-semibold text-gray-900">$150</span></li>
+          </ul>
+        </div>
+
+        <!-- Assembly -->
+        <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 overflow-hidden shadow-sm lg:col-span-2">
+          <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+            <i data-lucide="package" class="w-6 h-6 text-brand-500" stroke-width="1.75"></i>
+            <h3 class="font-bold text-gray-900 text-lg">Assembly</h3>
+          </div>
+          <ul class="divide-y divide-gray-100 text-sm">
+            <li class="px-6 py-3 flex justify-between"><span class="text-gray-700">Bike assembly (new bike from box)</span><span class="font-semibold text-gray-900">$100</span></li>
           </ul>
         </div>
 
@@ -259,8 +259,8 @@
         <div class="grid md:grid-cols-3 gap-6">
           <div class="bg-gray-50 rounded-2xl ring-1 ring-gray-200/60 p-6">
             <div class="text-3xl font-black bb-gradient-text leading-none mb-3">01</div>
-            <h3 class="font-bold text-gray-900 mb-1">Book or walk in</h3>
-            <p class="text-sm text-gray-600">Fill out the quick intake form so we know what's coming, or just stop by during open hours.</p>
+            <h3 class="font-bold text-gray-900 mb-1">Walk in or call</h3>
+            <p class="text-sm text-gray-600">Stop by during open hours, or call to set up an appointment — including evenings.</p>
           </div>
           <div class="bg-gray-50 rounded-2xl ring-1 ring-gray-200/60 p-6">
             <div class="text-3xl font-black bb-gradient-text leading-none mb-3">02</div>
