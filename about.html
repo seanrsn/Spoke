@@ -31,26 +31,20 @@
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home",  "item": "https://brooklynbikery.com/" },
-      { "@type": "ListItem", "position": 2, "name": "About", "item": "https://brooklynbikery.com/about.html" }
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home",  "item": "https://brooklynbikery.com/" },
+          { "@type": "ListItem", "position": 2, "name": "About", "item": "https://brooklynbikery.com/about.html" }
+        ]
+      },
+      {
+        "@type": "AboutPage",
+        "url": "https://brooklynbikery.com/about.html",
+        "mainEntity": { "@id": "https://brooklynbikery.com/#store" }
+      }
     ]
-  }
-  </script>
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "BicycleStore",
-    "name": "Brooklyn Bikery",
-    "url": "https://brooklynbikery.com/",
-    "foundingDate": "2020",
-    "subOrganization": {
-      "@type": "Organization",
-      "name": "MachX Cycles",
-      "url": "https://machxcycles.com"
-    },
-    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "reviewCount": "200" }
   }
   </script>
 </head>

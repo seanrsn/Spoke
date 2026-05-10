@@ -159,6 +159,20 @@ def _move_to_failed(bucket: str, key: str, reason: str):
 # ============================================
 # PUSH NOTIFICATION HANDLER
 # ============================================
+_VAPID_CACHE = None  # module-level cache; survives across warm invocations
+
+def _get_vapid_private_key():
+    """Fetch VAPID private key from Secrets Manager (cached per Lambda warm cycle)."""
+    global _VAPID_CACHE
+    if _VAPID_CACHE is not None:
+        return _VAPID_CACHE
+    sm = boto3.client("secretsmanager", region_name="us-east-1")
+    resp = sm.get_secret_value(SecretId="bikery-vapid-keys")
+    keys = json.loads(resp["SecretString"])
+    _VAPID_CACHE = keys.get("privateKey") or keys.get("private_key") or ""
+    return _VAPID_CACHE
+
+
 def handle_push_notifications(event):
     """
     Send web push notifications to all subscriptions.
@@ -169,9 +183,11 @@ def handle_push_notifications(event):
         "action": "send_push",
         "subscriptions": [{"endpoint": "...", "p256dh": "...", "auth": "..."}],
         "payload": "{...}",
-        "vapid_private_key": "...",
         "vapid_claims": {"sub": "mailto:..."}
     }
+
+    NOTE: vapid_private_key is NOT in the event — fetched from Secrets Manager
+    so it never sits in the (public-read) S3 push job.
     """
     if not PYWEBPUSH_AVAILABLE:
         print("⚠️ pywebpush not available, cannot send push notifications")
@@ -179,8 +195,15 @@ def handle_push_notifications(event):
 
     subscriptions = event.get("subscriptions", [])
     payload = event.get("payload", "")
-    vapid_private_key = event.get("vapid_private_key", "")
     vapid_claims = event.get("vapid_claims", {})
+    try:
+        vapid_private_key = _get_vapid_private_key()
+    except Exception as e:
+        print(f"❌ Failed to fetch VAPID private key from Secrets Manager: {e}")
+        return {"ok": False, "error": "vapid_unavailable"}
+    if not vapid_private_key:
+        print("❌ VAPID private key empty/missing in Secrets Manager")
+        return {"ok": False, "error": "vapid_missing"}
 
     print(f"🔔 Sending push to {len(subscriptions)} subscription(s)")
 

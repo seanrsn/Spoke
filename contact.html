@@ -30,26 +30,20 @@
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "BicycleStore",
-    "name": "Brooklyn Bikery",
-    "url": "https://brooklynbikery.com/",
-    "telephone": "+1-718-218-4464",
-    "email": "brooklynbikery@gmail.com",
-    "priceRange": "$",
-    "address": {
-      "@type": "PostalAddress",
-      "streetAddress": "3149 Emmons Ave",
-      "addressLocality": "Brooklyn",
-      "addressRegion": "NY",
-      "postalCode": "11235",
-      "addressCountry": "US"
-    },
-    "openingHoursSpecification": [
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": "Wednesday", "opens": "18:30", "closes": "20:30" },
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Thursday","Friday"], "opens": "10:00", "closes": "18:00" },
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Saturday","Sunday"], "opens": "10:00", "closes": "16:00" }
-    ],
-    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "reviewCount": "200" }
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home",    "item": "https://brooklynbikery.com/" },
+          { "@type": "ListItem", "position": 2, "name": "Contact", "item": "https://brooklynbikery.com/contact.html" }
+        ]
+      },
+      {
+        "@type": "ContactPage",
+        "url": "https://brooklynbikery.com/contact.html",
+        "about": { "@id": "https://brooklynbikery.com/#store" }
+      }
+    ]
   }
   </script>
 </head>

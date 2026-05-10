@@ -330,12 +330,12 @@ def send_push_notifications(from_number, message_body, db_secret):
     Send push notifications by writing a job file to S3 push/ folder.
     The Send-SMS Lambda (not in VPC) picks it up via S3 trigger and
     sends the actual webpush request to Apple/Google push servers.
+
+    NOTE: VAPID private key is NOT included in the S3 job anymore.
+    Send-SMS.py fetches it directly from Secrets Manager. This avoids
+    leaking the private key if the bucket policy ever loosens.
     """
-    print("🔔 Step 1: Getting VAPID keys...")
-    sm_client = boto3.client("secretsmanager", region_name=REGION)
-    resp = sm_client.get_secret_value(SecretId="bikery-vapid-keys")
-    vapid_keys = json.loads(resp["SecretString"])
-    print("🔔 Step 2: VAPID keys retrieved, querying subscriptions...")
+    print("🔔 Step 1: Querying push subscriptions...")
 
     # Get push subscriptions AND customer name in one DB connection
     conn = pymysql.connect(
@@ -386,7 +386,9 @@ def send_push_notifications(from_number, message_body, db_secret):
         "data": {"phone": from_number, "name": customer_name or display_sender}
     })
 
-    # Write push job to S3 — triggers Send-SMS Lambda via S3 event
+    # Write push job to S3 — triggers Send-SMS Lambda via S3 event.
+    # VAPID private key intentionally OMITTED here — Send-SMS fetches it from
+    # Secrets Manager so it never sits in S3 (which is public-read for mms-images/).
     push_job = json.dumps({
         "action": "send_push",
         "subscriptions": [
@@ -394,7 +396,6 @@ def send_push_notifications(from_number, message_body, db_secret):
             for ep, p256, au in subscriptions
         ],
         "payload": payload,
-        "vapid_private_key": vapid_keys["privateKey"],
         "vapid_claims": {"sub": "mailto:admin@brooklynbikery.com"}
     })
 
