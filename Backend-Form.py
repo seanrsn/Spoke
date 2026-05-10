@@ -492,6 +492,14 @@ def lambda_handler(event, context):
             order_updates["price"] = total_price
             order_updates["final_price"] = final_price
 
+            # Defense-in-depth: column names should only ever be alphanumeric + underscore.
+            # Today they come from a server-controlled dict literal, but this prevents
+            # SQLi regression if a future edit accidentally pulls a column name from user input.
+            for _col in order_updates:
+                if not _col or not all(c.isalnum() or c == '_' for c in _col):
+                    print(f"SECURITY: rejecting non-alphanumeric column name: {_col!r}")
+                    return response(400, {"message": "Invalid request"})
+
             # Update order record
             cursor.execute(
                 f"UPDATE orders SET {', '.join([f'{c} = %s' for c in order_updates.keys()])} WHERE id = %s",
@@ -569,4 +577,4 @@ def lambda_handler(event, context):
 
     except Exception as e:
         traceback.print_exc()
-        return response(500, {"message": f"Error: {e}"})
+        return response(500, {"message": "Internal error"})

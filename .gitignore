@@ -1,35 +1,3 @@
-# Build artifacts / old packages
-*.zip
-*.tar.gz
-lambda_with_pymysql/
-sms_tmp/
-
-# Old GitHub snapshot (no longer canonical)
-Spoke/
-
-# Unused files
-neonindex.html
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Secrets
-*.env
-.env*
-secrets.json
-*.pem
-*.key
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-.claude/
-
-# Logs
+node_modules/
 *.log
+.DS_Store

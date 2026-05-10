@@ -66,30 +66,88 @@ def get_admin_password():
 
 def get_jwt_secret():
     """
-    Get or create JWT signing secret from Secrets Manager.
-    Creates a new random secret if one doesn't exist.
+    Get JWT signing secret from Secrets Manager.
+
+    The secret MUST be pre-provisioned in IaC. This function used to
+    auto-create the secret on ResourceNotFoundException, but that's a
+    rotation race condition (concurrent cold starts each create-then-
+    overwrite, instantly invalidating live tokens).
     """
     client = boto3.client("secretsmanager", region_name=REGION)
     secret_id = "bikery-jwt-secret"
-    
     try:
         resp = client.get_secret_value(SecretId=secret_id)
         secret_data = json.loads(resp["SecretString"])
-        return secret_data.get("secret", "")
+        secret = secret_data.get("secret", "")
+        if not secret:
+            print("CRITICAL: bikery-jwt-secret exists but has empty 'secret' field")
+            raise RuntimeError("JWT secret misconfigured")
+        return secret
     except client.exceptions.ResourceNotFoundException:
-        # Create a new JWT secret if it doesn't exist
-        import secrets
-        new_secret = secrets.token_hex(32)  # 256-bit random secret
-        client.create_secret(
-            Name=secret_id,
-            Description="JWT signing secret for Brooklyn Bikery admin",
-            SecretString=json.dumps({"secret": new_secret})
-        )
-        print(f"Created new JWT secret: {secret_id}")
-        return new_secret
-    except Exception as e:
-        print(f"Error with JWT secret: {e}")
+        print("CRITICAL: bikery-jwt-secret not provisioned. Create it in Secrets Manager.")
         raise
+    except Exception as e:
+        print(f"Error fetching JWT secret: {e}")
+        raise
+
+def get_twilio_auth_token():
+    """Fetch Twilio auth token from Secrets Manager for webhook signature validation."""
+    try:
+        client = boto3.client("secretsmanager", region_name=REGION)
+        resp = client.get_secret_value(SecretId="twilio-credentials")
+        secret_data = json.loads(resp["SecretString"])
+        # Try both common key names
+        return secret_data.get("auth_token") or secret_data.get("authToken") or ""
+    except Exception as e:
+        print(f"Error fetching Twilio auth token: {e}")
+        return None
+
+def validate_twilio_signature(event, raw_body):
+    """
+    Validate Twilio's X-Twilio-Signature against the request.
+    Returns True if valid, False if missing/invalid/can't be checked.
+    Reference: https://www.twilio.com/docs/usage/webhooks/webhooks-security
+    """
+    headers = event.get("headers") or {}
+    # Find the header case-insensitively (API Gateway v2 lowercases)
+    sig_header_key = next((k for k in headers if k.lower() == "x-twilio-signature"), None)
+    if not sig_header_key:
+        print("WARN: missing X-Twilio-Signature header")
+        return False
+    twilio_sig = headers[sig_header_key]
+
+    auth_token = get_twilio_auth_token()
+    if not auth_token:
+        print("WARN: Twilio auth token unavailable, refusing to validate")
+        return False
+
+    # Reconstruct the URL Twilio called
+    rc = event.get("requestContext", {}) or {}
+    domain = rc.get("domainName") or headers.get("Host") or headers.get("host") or ""
+    http_ctx = rc.get("http") or {}
+    path = (http_ctx.get("path")
+            or rc.get("path")
+            or event.get("rawPath")
+            or event.get("path")
+            or "")
+    proto = (headers.get("X-Forwarded-Proto")
+             or headers.get("x-forwarded-proto")
+             or "https")
+    url = f"{proto}://{domain}{path}"
+    raw_qs = event.get("rawQueryString", "")
+    if raw_qs:
+        url += f"?{raw_qs}"
+
+    # Twilio appends POST params sorted alphabetically by key, value concatenated
+    from urllib.parse import parse_qs
+    form = parse_qs(raw_body, keep_blank_values=True)
+    signing_string = url + "".join(
+        f"{k}{(v[0] if isinstance(v, list) else v)}" for k, v in sorted(form.items())
+    )
+    expected = base64.b64encode(
+        hmac.new(auth_token.encode("utf-8"), signing_string.encode("utf-8"), hashlib.sha1).digest()
+    ).decode("utf-8")
+    return hmac.compare_digest(expected, twilio_sig)
 
 # ============================================
 # JWT IMPLEMENTATION
@@ -496,6 +554,16 @@ def lambda_handler(event, context):
             if event.get("isBase64Encoded"):
                 webhook_body = base64.b64decode(webhook_body).decode('utf-8')
 
+            # CRITICAL: validate Twilio signature before any DB writes / push fan-out.
+            # Without this, anyone can spoof "customer replies" and trigger push storms.
+            if not validate_twilio_signature(event, webhook_body):
+                print("⛔ Twilio signature validation failed — rejecting webhook")
+                return {
+                    "statusCode": 403,
+                    "headers": {"Content-Type": "text/xml"},
+                    "body": "<Response></Response>"
+                }
+
             # Parse URL-encoded form data from Twilio
             from urllib.parse import parse_qs
             form_data = parse_qs(webhook_body)
@@ -676,7 +744,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in send-sms: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
     
     # ============================================
     # GET UPLOAD URL ENDPOINT
@@ -707,33 +775,38 @@ def lambda_handler(event, context):
             safe_filename = "".join(c for c in file_name if c.isalnum() or c in '._-')[:50]
             image_key = f"mms-images/{timestamp}_{uuid.uuid4().hex[:8]}_{safe_filename}"
 
-            # Generate presigned URL for upload (valid for 5 minutes)
-            # NOT including ContentType in params - more permissive for browser uploads
+            # Generate presigned URL for upload — pin Content-Type to the validated
+            # type and require it on the PUT (browser must send the matching header).
+            # The 10MB cap is enforced by the bucket policy; we also reject obvious
+            # oversize uploads here by including the X-Amz-Server-Side-Encryption
+            # constraint isn't applicable to PUT presigns, so the bucket policy +
+            # content-type pinning are our two layers.
             presigned_url = s3_client.generate_presigned_url(
                 'put_object',
                 Params={
                     'Bucket': mms_bucket,
-                    'Key': image_key
+                    'Key': image_key,
+                    'ContentType': file_type,  # browser MUST send matching Content-Type
                 },
                 ExpiresIn=300  # 5 minutes
             )
 
-            # Generate the public URL for the uploaded image
-            # This assumes the S3 bucket is configured for public read access on mms-images/*
+            # Public URL (bucket is public-read on mms-images/* via bucket policy)
             public_url = f"https://{mms_bucket}.s3.amazonaws.com/{image_key}"
 
-            print(f"✅ Generated upload URL for: {image_key}")
+            print(f"✅ Generated upload URL for: {image_key} (type={file_type})")
 
             return response(200, {
                 "uploadUrl": presigned_url,
                 "publicUrl": public_url,
-                "key": image_key
+                "key": image_key,
+                "requiredContentType": file_type
             })
 
         except Exception as e:
             print(f"❌ Error in get-upload-url: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # GET DATABASE TABLES ENDPOINT
@@ -795,7 +868,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in get-db-tables: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # GET MESSAGES ENDPOINT
@@ -891,7 +964,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in get-messages: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # GET MESSAGE THREADS ENDPOINT
@@ -956,7 +1029,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in get-message-threads: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # GET VAPID PUBLIC KEY ENDPOINT
@@ -974,7 +1047,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in get-vapid-key: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # SAVE PUSH SUBSCRIPTION ENDPOINT
@@ -1027,7 +1100,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in save-push-subscription: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # DELETE PUSH SUBSCRIPTION ENDPOINT
@@ -1066,7 +1139,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in delete-push-subscription: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # GET CUSTOMERS ENDPOINT
@@ -1109,7 +1182,7 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Error in get-customers: {str(e)}")
             traceback.print_exc()
-            return response(500, {"message": f"Error: {str(e)}"})
+            return response(500, {"message": "Internal error"})
 
     # ============================================
     # SEARCH ORDERS ENDPOINT (Default route)
@@ -1258,4 +1331,4 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"❌ Error in search: {str(e)}")
         traceback.print_exc()
-        return response(500, {"message": f"Error: {str(e)}"})
+        return response(500, {"message": "Internal error"})

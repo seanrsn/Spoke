@@ -1,0 +1,13 @@
+{
+  "name": "brooklyn-bikery-styles",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tailwind CSS build for the Brooklyn Bikery static site.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/styles.css -o ./bb.css --minify",
+    "watch:css": "tailwindcss -i ./src/styles.css -o ./bb.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

@@ -16,29 +16,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: { extend: {
-        fontFamily: { sans: ['Outfit', 'system-ui', 'sans-serif'] },
-        colors: { brand: { 50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12' } }
-      } }
-    }
-  </script>
-  <style>
-    .bb-gradient-text { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .bb-gradient-btn { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); transition: all 0.25s ease; }
-    .bb-gradient-btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 12px 30px -8px rgba(234, 88, 12, 0.55); }
-    .prose-custom h2 { font-size: 1.25rem; font-weight: 800; color: #111827; margin: 1.75rem 0 0.5rem; }
-    .prose-custom p  { color: #4b5563; line-height: 1.75; margin-bottom: 1rem; }
-    .prose-custom strong { color: #111827; }
-  </style>
+  <link rel="stylesheet" href="/bb.css">
 </head>
 <body class="font-sans text-gray-800 antialiased bg-gray-50">
 
   <nav class="fixed top-0 inset-x-0 z-50 bg-white/95 backdrop-blur border-b border-gray-200/70">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3">
+      <a href="/" class="flex items-center gap-2 shrink-0">
         <img src="/brooklyn-bikery-logo.png" alt="Brooklyn Bikery" class="h-9 w-auto">
         <span class="font-extrabold text-gray-900 tracking-tight hidden sm:inline">Brooklyn Bikery</span>
       </a>
@@ -49,9 +33,27 @@
         <a href="/about.html" class="hover:text-brand-600 transition-colors">About</a>
         <a href="/contact.html" class="hover:text-brand-600 transition-colors">Contact</a>
       </div>
-      <a href="tel:17182184464" class="bb-gradient-btn inline-flex items-center gap-1.5 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-md shadow-brand-900/20"><i data-lucide="phone" class="w-3.5 h-3.5"></i> Call Us</a>
+      <div class="flex items-center gap-2">
+        <a href="tel:17182184464" class="bb-gradient-btn inline-flex items-center gap-1.5 text-white text-sm font-semibold px-3 sm:px-4 py-2 rounded-lg shadow-md shadow-brand-900/20"><i data-lucide="phone" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Call Us</span></a>
+        <button onclick="toggleMobileNav()" class="md:hidden p-2 text-gray-700 hover:text-brand-600 transition-colors" aria-label="Toggle menu" aria-expanded="false" id="mobile-nav-btn">
+          <i data-lucide="menu" class="w-6 h-6" id="nav-menu-icon"></i>
+          <i data-lucide="x" class="w-6 h-6 hidden" id="nav-close-icon"></i>
+        </button>
+      </div>
+    </div>
+    <div id="mobile-nav" class="hidden md:hidden border-t border-gray-200/70 bg-white">
+      <div class="px-4 py-3 space-y-1">
+        <a href="/services.html" class="block px-4 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700">Services</a>
+        <a href="/rentals.html" class="block px-4 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700">Rentals</a>
+        <a href="/lessons.html" class="block px-4 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700">Lessons</a>
+        <a href="/about.html" class="block px-4 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700">About</a>
+        <a href="/contact.html" class="block px-4 py-3 rounded-lg text-base font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700">Contact</a>
+      </div>
     </div>
   </nav>
+  <script>
+    function toggleMobileNav(){const n=document.getElementById('mobile-nav'),m=document.getElementById('nav-menu-icon'),x=document.getElementById('nav-close-icon'),b=document.getElementById('mobile-nav-btn');const open=n.classList.toggle('hidden')===false;m.classList.toggle('hidden',open);x.classList.toggle('hidden',!open);b.setAttribute('aria-expanded',String(open));}
+  </script>
 
   <main class="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
     <div class="max-w-3xl mx-auto">
@@ -118,7 +120,7 @@
     </div>
   </footer>
 
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.471.0/dist/umd/lucide.min.js" integrity="sha384-KpXDE5oKROGQ3ToUTkqvxct6xiG7LCgmHGqMVTiaPvoebtWQ4xoOPY3Zo4+DoZ9n" crossorigin="anonymous"></script>
   <script>
     document.getElementById('year').textContent = new Date().getFullYear();
     lucide.createIcons();

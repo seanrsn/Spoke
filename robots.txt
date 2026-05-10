@@ -1,0 +1,12 @@
+# Brooklyn Bikery — robots.txt
+User-agent: *
+Allow: /
+
+# Internal/staff pages — not for crawlers
+Disallow: /customer-form.html
+Disallow: /backend-form.html
+Disallow: /admin-dashboard.html
+Disallow: /neonindex.html
+Disallow: /error.html
+
+Sitemap: https://brooklynbikery.com/sitemap.xml

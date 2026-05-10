@@ -137,11 +137,38 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync HTML/JS/JSON to S3
+      - name: Set up Node (for Tailwind build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build Tailwind CSS
         run: |
-          for f in *.html *.js *.json; do
+          npm ci --silent
+          npm run build:css
+
+      - name: Sync HTML/CSS/JS/JSON to S3
+        run: |
+          # customer-form.html is retired (staff-internal flow now). Don't ship.
+          for f in *.html *.css *.js *.json; do
             [ -f "$f" ] || continue
-            aws s3 cp "$f" "s3://${S3_BUCKET}/$f" --region "$AWS_REGION"
+            case "$f" in
+              customer-form.html) echo "Skipping retired $f"; continue ;;
+              neonindex.html)     echo "Skipping legacy $f";  continue ;;
+            esac
+            CACHE="public, max-age=300, must-revalidate"
+            aws s3 cp "$f" "s3://${S3_BUCKET}/$f" \
+              --cache-control "$CACHE" \
+              --region "$AWS_REGION"
+          done
+
+      - name: Sync sitemap + robots
+        run: |
+          for f in sitemap.xml robots.txt; do
+            [ -f "$f" ] && aws s3 cp "$f" "s3://${S3_BUCKET}/$f" \
+              --cache-control "public, max-age=3600" \
+              --region "$AWS_REGION"
           done
 
       - name: Invalidate CloudFront cache

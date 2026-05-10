@@ -15,21 +15,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: { extend: {
-        fontFamily: { sans: ['Outfit', 'system-ui', 'sans-serif'] },
-        colors: { brand: { 50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12' } }
-      } }
-    }
-  </script>
-  <style>
-    .bb-gradient-text { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .bb-gradient-bg { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); }
-    .bb-gradient-btn { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); transition: all 0.25s ease; }
-    .bb-gradient-btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 12px 30px -8px rgba(234, 88, 12, 0.55); }
-  </style>
+  <link rel="stylesheet" href="/bb.css">
 </head>
 <body class="font-sans text-white antialiased min-h-screen flex flex-col" style="background:#0a0a0f">
 
@@ -92,7 +78,7 @@
     © <span id="year">2026</span> Brooklyn Bikery
   </footer>
 
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@0.471.0/dist/umd/lucide.min.js" integrity="sha384-KpXDE5oKROGQ3ToUTkqvxct6xiG7LCgmHGqMVTiaPvoebtWQ4xoOPY3Zo4+DoZ9n" crossorigin="anonymous"></script>
   <script>
     document.getElementById('year').textContent = new Date().getFullYear();
     lucide.createIcons();
