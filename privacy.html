@@ -91,8 +91,9 @@
 
           <div class="bg-gray-50 rounded-xl p-5 mt-8 text-center">
             <p class="font-bold text-gray-900 mb-2">Questions?</p>
-            <p class="m-0">📧 <a href="mailto:brooklynbikery@gmail.com" class="text-brand-600 hover:text-brand-700 font-semibold">brooklynbikery@gmail.com</a></p>
-            <p class="m-0 mt-1">📞 <a href="tel:17182184464" class="text-brand-600 hover:text-brand-700 font-semibold">(718) 218-4464</a></p>
+            <p class="m-0 inline-flex items-center gap-1.5 justify-center"><i data-lucide="mail" class="w-4 h-4 text-brand-500" stroke-width="1.75"></i><a href="mailto:brooklynbikery@gmail.com" class="text-brand-600 hover:text-brand-700 font-semibold">brooklynbikery@gmail.com</a></p>
+            <br>
+            <p class="m-0 mt-1 inline-flex items-center gap-1.5 justify-center"><i data-lucide="phone" class="w-4 h-4 text-brand-500" stroke-width="1.75"></i><a href="tel:17182184464" class="text-brand-600 hover:text-brand-700 font-semibold">(718) 218-4464</a></p>
           </div>
         </div>
       </div>
@@ -117,6 +118,10 @@
     </div>
   </footer>
 
-  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+    lucide.createIcons();
+  </script>
 </body>
 </html>

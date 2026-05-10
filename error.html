@@ -51,7 +51,7 @@
 
       <p class="text-[8rem] sm:text-[10rem] font-black leading-none bb-gradient-text tracking-tighter">404</p>
 
-      <div class="text-6xl sm:text-7xl mb-6">🚲</div>
+      <div class="flex justify-center mb-6"><i data-lucide="bike" class="w-16 h-16 sm:w-20 sm:h-20 text-gray-500" stroke-width="1.5"></i></div>
 
       <h1 class="text-3xl sm:text-4xl font-black tracking-tight mb-3">
         Hit a <span class="bb-gradient-text">pothole.</span>
@@ -63,10 +63,10 @@
 
       <div class="flex flex-wrap items-center justify-center gap-3">
         <a href="/" class="bb-gradient-btn inline-flex items-center gap-2 text-white px-7 py-3.5 rounded-xl font-bold shadow-xl shadow-brand-900/30">
-          🏠 Back to Home
+          <i data-lucide="home" class="w-4 h-4"></i> Back to Home
         </a>
         <a href="tel:17182184464" class="inline-flex items-center gap-2 border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white px-7 py-3.5 rounded-xl font-bold transition-colors">
-          📞 (718) 218-4464
+          <i data-lucide="phone" class="w-4 h-4"></i> (718) 218-4464
         </a>
       </div>
 
@@ -92,6 +92,10 @@
     © <span id="year">2026</span> Brooklyn Bikery
   </footer>
 
-  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+    lucide.createIcons();
+  </script>
 </body>
 </html>
