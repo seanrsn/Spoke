@@ -3,204 +3,129 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Terms & Conditions - Brooklyn Bikery</title>
-  
-  <link rel="icon" type="image/png" sizes="512x512" href="https://brooklyn-bikery-form.s3.us-east-1.amazonaws.com/favicon.png">
-  <link rel="icon" type="image/x-icon" href="https://brooklyn-bikery-form.s3.us-east-1.amazonaws.com/favicon.ico">
-  <link rel="apple-touch-icon" href="https://brooklyn-bikery-form.s3.us-east-1.amazonaws.com/favicon.png">
-  
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <title>Terms &amp; Conditions — Brooklyn Bikery</title>
+  <meta name="description" content="Brooklyn Bikery's terms for SMS messages — opt-in, opt-out, frequency, and carrier disclaimers.">
+  <link rel="canonical" href="https://brooklynbikery.com/terms.html">
+
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <meta name="theme-color" content="#ea580c">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        fontFamily: { sans: ['Outfit', 'system-ui', 'sans-serif'] },
+        colors: { brand: { 50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12' } }
+      } }
+    }
+  </script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    
-    body {
-      font-family: 'Outfit', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      background-attachment: fixed;
-      min-height: 100vh;
-      padding: 2rem 1rem;
-    }
-    
-    .container {
-      background: white;
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 2.5rem;
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }
-    
-    .header {
-      text-align: center;
-      margin-bottom: 2rem;
-    }
-    
-    .bike-emoji {
-      font-size: 2.5rem;
-      margin-bottom: 0.5rem;
-    }
-    
-    h1 {
-      font-size: 1.6rem;
-      font-weight: 700;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    
-    .last-updated {
-      color: #999;
-      font-size: 0.85rem;
-      margin-top: 0.5rem;
-    }
-    
-    h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: #667eea;
-      margin: 1.5rem 0 0.75rem 0;
-    }
-    
-    p {
-      color: #444;
-      line-height: 1.7;
-      margin-bottom: 1rem;
-      font-size: 0.95rem;
-    }
-    
-    .highlight {
-      background: #f8f9ff;
-      border-left: 3px solid #667eea;
-      padding: 1rem 1.25rem;
-      border-radius: 0 10px 10px 0;
-      margin: 1rem 0;
-    }
-    
-    .highlight p {
-      margin: 0;
-    }
-    
-    .terms-list {
-      background: #fafafa;
-      border-radius: 12px;
-      padding: 1.25rem;
-      margin: 1rem 0;
-    }
-    
-    .terms-list .item {
-      display: flex;
-      gap: 0.75rem;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #eee;
-    }
-    
-    .terms-list .item:last-child {
-      border-bottom: none;
-    }
-    
-    .terms-list .label {
-      font-weight: 600;
-      color: #667eea;
-      min-width: 100px;
-    }
-    
-    .terms-list .value {
-      color: #444;
-    }
-    
-    .contact-box {
-      background: #f8f9ff;
-      padding: 1.25rem;
-      border-radius: 12px;
-      margin-top: 1.5rem;
-      text-align: center;
-    }
-    
-    .contact-box p {
-      margin: 0.25rem 0;
-    }
-    
-    a {
-      color: #667eea;
-      text-decoration: none;
-      font-weight: 600;
-    }
-    
-    a:hover {
-      text-decoration: underline;
-    }
-    
-    .back-link {
-      display: inline-block;
-      margin-top: 1.5rem;
-      padding: 0.75rem 1.5rem;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      border-radius: 10px;
-      font-weight: 600;
-      text-decoration: none;
-      transition: all 0.3s ease;
-    }
-    
-    .back-link:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-      text-decoration: none;
-    }
-    
-    @media (max-width: 768px) {
-      body { padding: 1rem 0.5rem; }
-      .container { padding: 1.75rem 1.25rem; }
-      h1 { font-size: 1.4rem; }
-      .terms-list .item { flex-direction: column; gap: 0.25rem; }
-      .terms-list .label { min-width: auto; }
-    }
+    .bb-gradient-text { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .bb-gradient-btn { background: linear-gradient(135deg, #ea580c 0%, #f59e0b 100%); transition: all 0.25s ease; }
+    .bb-gradient-btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 12px 30px -8px rgba(234, 88, 12, 0.55); }
+    .prose-custom h2 { font-size: 1.25rem; font-weight: 800; color: #111827; margin: 1.75rem 0 0.5rem; }
+    .prose-custom p  { color: #4b5563; line-height: 1.75; margin-bottom: 1rem; }
+    .prose-custom strong { color: #111827; }
   </style>
 </head>
-<body>
-  <div class="container">
-    <div class="header">
-      <div class="bike-emoji">🚴</div>
-      <h1>Terms & Conditions</h1>
-    </div>
-    
-    <p>By opting in to Brooklyn Bikery SMS messages, you agree to receive recurring automated text messages at the phone number you provided. These messages may include service appointment reminders, order updates, and promotional offers.</p>
-    
-    <h2>SMS Program Details</h2>
-    
-    <div class="terms-list">
-      <div class="item">
-        <span class="label">Frequency</span>
-        <span class="value">Message frequency varies based on your service activity</span>
+<body class="font-sans text-gray-800 antialiased bg-gray-50">
+
+  <nav class="fixed top-0 inset-x-0 z-50 bg-white/95 backdrop-blur border-b border-gray-200/70">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2">
+        <img src="/brooklyn-bikery-logo.png" alt="Brooklyn Bikery" class="h-9 w-auto">
+        <span class="font-extrabold text-gray-900 tracking-tight hidden sm:inline">Brooklyn Bikery</span>
+      </a>
+      <div class="hidden md:flex items-center gap-7 text-sm font-semibold text-gray-700">
+        <a href="/services.html" class="hover:text-brand-600 transition-colors">Services</a>
+        <a href="/rentals.html" class="hover:text-brand-600 transition-colors">Rentals</a>
+        <a href="/lessons.html" class="hover:text-brand-600 transition-colors">Lessons</a>
+        <a href="/about.html" class="hover:text-brand-600 transition-colors">About</a>
+        <a href="/contact.html" class="hover:text-brand-600 transition-colors">Contact</a>
       </div>
-      <div class="item">
-        <span class="label">To Opt Out</span>
-        <span class="value">Reply <strong>STOP</strong> to any message</span>
+      <a href="/customer-form.html" class="bb-gradient-btn text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-md shadow-brand-900/20">Book Service</a>
+    </div>
+  </nav>
+
+  <main class="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-3xl mx-auto">
+
+      <a href="/" class="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-brand-600 mb-4 transition-colors">← Back to home</a>
+
+      <div class="bg-white rounded-2xl ring-1 ring-gray-200/80 shadow-sm overflow-hidden">
+        <div class="px-6 sm:px-10 py-8 border-b border-gray-100">
+          <p class="text-brand-600 text-[11px] font-bold uppercase tracking-[0.22em] mb-2">Legal</p>
+          <h1 class="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
+            Terms &amp; <span class="bb-gradient-text">Conditions</span>
+          </h1>
+          <p class="text-gray-500 text-sm mt-2">SMS program terms · Brooklyn Bikery</p>
+        </div>
+
+        <div class="px-6 sm:px-10 py-8 prose-custom">
+          <p>By opting in to Brooklyn Bikery SMS messages, you agree to receive recurring automated text messages at the phone number you provided. These messages may include service appointment reminders, order updates, and promotional offers.</p>
+
+          <h2>SMS Program Details</h2>
+          <div class="bg-gray-50 rounded-xl divide-y divide-gray-200 my-3">
+            <div class="px-5 py-3 grid sm:grid-cols-[140px_1fr] gap-2 sm:gap-4">
+              <span class="font-semibold text-brand-600 text-sm">Frequency</span>
+              <span class="text-gray-700 text-sm">Message frequency varies based on your service activity</span>
+            </div>
+            <div class="px-5 py-3 grid sm:grid-cols-[140px_1fr] gap-2 sm:gap-4">
+              <span class="font-semibold text-brand-600 text-sm">To Opt Out</span>
+              <span class="text-gray-700 text-sm">Reply <strong>STOP</strong> to any message</span>
+            </div>
+            <div class="px-5 py-3 grid sm:grid-cols-[140px_1fr] gap-2 sm:gap-4">
+              <span class="font-semibold text-brand-600 text-sm">For Help</span>
+              <span class="text-gray-700 text-sm">Reply <strong>HELP</strong> to any message</span>
+            </div>
+            <div class="px-5 py-3 grid sm:grid-cols-[140px_1fr] gap-2 sm:gap-4">
+              <span class="font-semibold text-brand-600 text-sm">Charges</span>
+              <span class="text-gray-700 text-sm">Message and data rates may apply</span>
+            </div>
+          </div>
+
+          <h2>Carrier Disclaimer</h2>
+          <p>Wireless carriers are not liable for delayed or undelivered messages. Message delivery is subject to effective transmission by your wireless carrier.</p>
+
+          <h2>Program Sponsor</h2>
+          <div class="bg-brand-50/70 border-l-4 border-brand-500 rounded-r-xl px-5 py-4 my-5">
+            <p class="m-0 text-gray-800"><strong>Brooklyn Bikery</strong><br>3149 Emmons Ave, Brooklyn, NY 11235</p>
+          </div>
+
+          <div class="bg-gray-50 rounded-xl p-5 mt-8 text-center">
+            <p class="font-bold text-gray-900 mb-2">Questions?</p>
+            <p class="m-0">📧 <a href="mailto:brooklynbikery@gmail.com" class="text-brand-600 hover:text-brand-700 font-semibold">brooklynbikery@gmail.com</a></p>
+            <p class="m-0 mt-1">📞 <a href="tel:17182184464" class="text-brand-600 hover:text-brand-700 font-semibold">(718) 218-4464</a></p>
+          </div>
+        </div>
       </div>
-      <div class="item">
-        <span class="label">For Help</span>
-        <span class="value">Reply <strong>HELP</strong> to any message</span>
-      </div>
-      <div class="item">
-        <span class="label">Charges</span>
-        <span class="value">Message and data rates may apply</span>
+
+    </div>
+  </main>
+
+  <footer class="text-white border-t border-white/[0.08]" style="background:#0a0a0f">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <div class="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm">
+        <div class="flex items-center gap-2">
+          <img src="/brooklyn-bikery-logo.png" alt="Brooklyn Bikery" class="h-7 w-auto">
+          <span class="font-extrabold text-white">Brooklyn Bikery</span>
+        </div>
+        <div class="text-gray-500 flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+          <a href="/" class="hover:text-white transition-colors">Home</a>
+          <a href="/contact.html" class="hover:text-white transition-colors">Contact</a>
+          <a href="/privacy.html" class="hover:text-white transition-colors">Privacy</a>
+          <span>© <span id="year">2026</span> Brooklyn Bikery</span>
+        </div>
       </div>
     </div>
-    
-    <h2>Carrier Disclaimer</h2>
-    <p>Wireless carriers are not liable for delayed or undelivered messages. Message delivery is subject to effective transmission by your wireless carrier.</p>
-    
-    <h2>Program Sponsor</h2>
-    <div class="highlight">
-      <p><strong>Brooklyn Bikery</strong><br>3149 Emmons Ave, Brooklyn, NY</p>
-    </div>
-    
-    <div class="contact-box">
-      <p><strong>Questions?</strong></p>
-      <p>📧 <a href="mailto:brooklynbikery@gmail.com">brooklynbikery@gmail.com</a></p>
-      <p>📞 <a href="tel:17182184464">(718) 218-4464</a></p>
-    </div>
-  </div>
+  </footer>
+
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 </body>
 </html>
