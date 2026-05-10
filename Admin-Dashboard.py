@@ -121,13 +121,15 @@ def validate_twilio_signature(event, raw_body):
         print("WARN: Twilio auth token unavailable, refusing to validate")
         return False
 
-    # Reconstruct the URL Twilio called
+    # Reconstruct the URL Twilio called.
+    # Prefer rawPath (preserves stage segment on default execute-api URLs);
+    # fall back to http.path / path for HTTP API custom-domain mappings.
     rc = event.get("requestContext", {}) or {}
     domain = rc.get("domainName") or headers.get("Host") or headers.get("host") or ""
     http_ctx = rc.get("http") or {}
-    path = (http_ctx.get("path")
+    path = (event.get("rawPath")
+            or http_ctx.get("path")
             or rc.get("path")
-            or event.get("rawPath")
             or event.get("path")
             or "")
     proto = (headers.get("X-Forwarded-Proto")
@@ -137,6 +139,9 @@ def validate_twilio_signature(event, raw_body):
     raw_qs = event.get("rawQueryString", "")
     if raw_qs:
         url += f"?{raw_qs}"
+    # Log once at INFO so misconfig (URL mismatch with what's in Twilio console)
+    # is detectable from CloudWatch without enabling debug logging.
+    print(f"Twilio sig validation: reconstructed url={url}")
 
     # Twilio appends POST params sorted alphabetically by key, value concatenated
     from urllib.parse import parse_qs
@@ -221,7 +226,17 @@ def verify_jwt(token):
             return None, "Invalid token format"
         
         header_b64, payload_b64, signature_b64 = parts
-        
+
+        # Validate the alg header — refuse anything other than HS256.
+        # Defense against future alg-confusion attacks if RS/ES support is ever
+        # added (or against "none"/"None" alg attacks).
+        try:
+            header = json.loads(base64url_decode(header_b64))
+        except Exception:
+            return None, "Invalid token header"
+        if header.get("alg") != "HS256":
+            return None, "Invalid token algorithm"
+
         # Verify signature
         message = f"{header_b64}.{payload_b64}"
         expected_sig = hmac.new(
@@ -323,7 +338,12 @@ def record_login_attempt(ip_address, success):
 # ============================================
 # PUSH NOTIFICATIONS (via S3 trigger → Send-SMS Lambda)
 # ============================================
-PUSH_BUCKET = os.getenv("PUSH_BUCKET", "brooklyn-bikery-sms")
+# Push jobs go to a SEPARATE private bucket. The legacy bucket
+# `brooklyn-bikery-sms` is public-read for the `mms-images/` prefix; even
+# though `push/` was prefix-scoped private, putting subscription endpoints +
+# auth secrets in any bucket that's partly public is a fragility we don't want.
+# `brooklyn-bikery-push-jobs` has BlockPublicAccess on at the bucket level.
+PUSH_BUCKET = os.getenv("PUSH_BUCKET", "brooklyn-bikery-push-jobs")
 
 def send_push_notifications(from_number, message_body, db_secret):
     """

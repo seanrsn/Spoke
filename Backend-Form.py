@@ -78,7 +78,16 @@ def verify_jwt(token):
             return None, "Invalid token format"
         
         header_b64, payload_b64, signature_b64 = parts
-        
+
+        # Validate the alg header — refuse anything other than HS256.
+        # Defense against alg-confusion / "none"-alg forge attacks.
+        try:
+            header = json.loads(base64url_decode(header_b64))
+        except Exception:
+            return None, "Invalid token header"
+        if header.get("alg") != "HS256":
+            return None, "Invalid token algorithm"
+
         # Verify signature using HMAC-SHA256
         message = f"{header_b64}.{payload_b64}"
         expected_sig = hmac.new(

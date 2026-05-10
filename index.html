@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Brooklyn Bikery — Bike Shop in Brooklyn, NY</title>
-  <meta name="description" content="Brooklyn Bikery is a neighborhood bike shop on Emmons Ave serving Brooklyn since 2020. Tune-ups, repairs, sales, rentals, and lessons — 4.9★ from 200+ Google reviews.">
+  <meta name="description" content="Brooklyn neighborhood bike shop on Emmons Ave since 2020. Tune-ups, repairs, rentals, lessons. 4.9★ from 200+ Google reviews.">
   <link rel="canonical" href="https://brooklynbikery.com/">
 
   <meta property="og:type" content="website">
@@ -31,36 +31,46 @@
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "BicycleStore",
-    "@id": "https://brooklynbikery.com/#store",
-    "name": "Brooklyn Bikery",
-    "url": "https://brooklynbikery.com/",
-    "logo": "https://brooklynbikery.com/brooklyn-bikery-logo.png",
-    "image": "https://brooklynbikery.com/brooklyn-bikery-logo.png",
-    "telephone": "+1-718-218-4464",
-    "email": "brooklynbikery@gmail.com",
-    "priceRange": "$",
-    "foundingDate": "2020",
-    "address": {
-      "@type": "PostalAddress",
-      "streetAddress": "3149 Emmons Ave",
-      "addressLocality": "Brooklyn",
-      "addressRegion": "NY",
-      "postalCode": "11235",
-      "addressCountry": "US"
-    },
-    "openingHoursSpecification": [
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": "Wednesday", "opens": "18:30", "closes": "20:30" },
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Thursday","Friday"], "opens": "10:00", "closes": "18:00" },
-      { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Saturday","Sunday"], "opens": "10:00", "closes": "16:00" }
-    ],
-    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "reviewCount": "200" },
-    "subOrganization": {
-      "@type": "Organization",
-      "name": "MachX Cycles",
-      "url": "https://machxcycles.com"
-    },
-    "sameAs": ["https://www.instagram.com/brooklynbikery/"]
+    "@graph": [
+      {
+        "@type": "BicycleStore",
+        "@id": "https://brooklynbikery.com/#store",
+        "name": "Brooklyn Bikery",
+        "url": "https://brooklynbikery.com/",
+        "logo": "https://brooklynbikery.com/brooklyn-bikery-logo.png",
+        "image": "https://brooklynbikery.com/brooklyn-bikery-logo.png",
+        "telephone": "+1-718-218-4464",
+        "email": "brooklynbikery@gmail.com",
+        "priceRange": "$",
+        "foundingDate": "2020",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "3149 Emmons Ave",
+          "addressLocality": "Brooklyn",
+          "addressRegion": "NY",
+          "postalCode": "11235",
+          "addressCountry": "US"
+        },
+        "openingHoursSpecification": [
+          { "@type": "OpeningHoursSpecification", "dayOfWeek": "Wednesday", "opens": "18:30", "closes": "20:30" },
+          { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Thursday","Friday"], "opens": "10:00", "closes": "18:00" },
+          { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Saturday","Sunday"], "opens": "10:00", "closes": "16:00" }
+        ],
+        "specialOpeningHoursSpecification": [
+          { "@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday","Tuesday"], "description": "By appointment only — call (718) 218-4464" }
+        ],
+        "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "reviewCount": "200" },
+        "subOrganization": { "@id": "https://machxcycles.com/#org" },
+        "sameAs": ["https://www.instagram.com/brooklynbikery/"]
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://machxcycles.com/#org",
+        "name": "MachX Cycles",
+        "url": "https://machxcycles.com",
+        "parentOrganization": { "@id": "https://brooklynbikery.com/#store" }
+      }
+    ]
   }
   </script>
 </head>
@@ -210,7 +220,7 @@
         <a href="/services.html" class="group bg-white rounded-2xl ring-1 ring-gray-200/80 hover:ring-brand-200 hover:shadow-xl hover:shadow-brand-100/40 transition-all duration-300 hover:-translate-y-1 p-6">
           <i data-lucide="wrench" class="w-9 h-9 text-brand-500 mb-5" stroke-width="1.75"></i>
           <h3 class="font-bold text-gray-900 text-lg mb-2">Repairs &amp; Tune-ups</h3>
-          <p class="text-sm text-gray-600 leading-relaxed mb-3">Flats, brakes, gears, full overhauls. Tune-ups from $100. Usually back to you in 1-2 days.</p>
+          <p class="text-sm text-gray-600 leading-relaxed mb-3">Flats, brakes, gears, full overhauls. Tune-ups from $99.99. Usually back to you in 1-2 days.</p>
           <span class="text-brand-600 text-sm font-semibold group-hover:translate-x-1 inline-block transition-transform">See pricing →</span>
         </a>
         <a href="/rentals.html" class="group bg-white rounded-2xl ring-1 ring-gray-200/80 hover:ring-brand-200 hover:shadow-xl hover:shadow-brand-100/40 transition-all duration-300 hover:-translate-y-1 p-6">

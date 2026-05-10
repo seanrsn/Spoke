@@ -162,15 +162,22 @@ def _move_to_failed(bucket: str, key: str, reason: str):
 _VAPID_CACHE = None  # module-level cache; survives across warm invocations
 
 def _get_vapid_private_key():
-    """Fetch VAPID private key from Secrets Manager (cached per Lambda warm cycle)."""
+    """Fetch VAPID private key from Secrets Manager (cached per Lambda warm cycle).
+
+    Important: only cache on success. Caching an empty string (e.g., from a
+    misconfigured secret) would persist for the lifetime of the warm container
+    and silently break push notifications even after the secret is fixed.
+    """
     global _VAPID_CACHE
-    if _VAPID_CACHE is not None:
+    if _VAPID_CACHE:
         return _VAPID_CACHE
     sm = boto3.client("secretsmanager", region_name="us-east-1")
     resp = sm.get_secret_value(SecretId="bikery-vapid-keys")
     keys = json.loads(resp["SecretString"])
-    _VAPID_CACHE = keys.get("privateKey") or keys.get("private_key") or ""
-    return _VAPID_CACHE
+    key = keys.get("privateKey") or keys.get("private_key") or ""
+    if key:
+        _VAPID_CACHE = key
+    return key
 
 
 def handle_push_notifications(event):

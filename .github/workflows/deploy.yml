@@ -27,18 +27,25 @@ jobs:
       - name: Decide what to do
         id: decide
         run: |
+          # should_deploy must be set ONLY when we actually want to deploy.
+          # Previously emitted unconditionally — meant any PR open/sync from a
+          # non-claude branch would still trigger Lambda + S3 redeploy of main.
           if [[ "${{ github.event_name }}" == "pull_request" && "${{ startsWith(github.head_ref, 'claude/') }}" == "true" ]]; then
-            echo "mode=merge_pr" >> $GITHUB_OUTPUT
+            echo "mode=merge_pr"      >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/heads/claude/') }}" == "true" ]]; then
-            echo "mode=merge_branch" >> $GITHUB_OUTPUT
+            echo "mode=merge_branch"  >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "mode=passthrough" >> $GITHUB_OUTPUT
+            echo "mode=passthrough"   >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "mode=passthrough" >> $GITHUB_OUTPUT
+            echo "mode=passthrough"   >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
           else
-            echo "mode=skip" >> $GITHUB_OUTPUT
+            echo "mode=skip"           >> $GITHUB_OUTPUT
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
           fi
-          echo "should_deploy=true" >> $GITHUB_OUTPUT
 
       - uses: actions/checkout@v4
         if: steps.decide.outputs.mode == 'merge_branch'

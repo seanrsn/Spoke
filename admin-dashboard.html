@@ -5845,8 +5845,10 @@ async function initPushNotifications() {
   }
 
   try {
-    // Register service worker
-    swRegistration = await navigator.serviceWorker.register('/sw.js');
+    // Register service worker — explicit scope so it doesn't claim entire origin.
+    // Default would be '/' (matching the SW file location), which would cover
+    // public pages too if a fetch handler is ever added.
+    swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/admin-dashboard.html' });
     console.log('Service Worker registered');
 
     // Get VAPID public key from server
