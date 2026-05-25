@@ -448,54 +448,38 @@ def lambda_handler(event, context):
                     vals.append(customer_id)
                     cursor.execute(f"UPDATE customers SET {', '.join(update_fields)} WHERE id = %s", vals)
 
-            # Build order service updates (set selected services to 1, others to 0)
-            order_service_cols = [col for col, _ in services_with_prices.values()]
-            order_updates = {col: 0 for col in order_service_cols}  # Default all to 0
-
-            # Set selected services to 1
-            for label in selected_services:
-                col_name, _ = services_with_prices.get(label, (None, None))
-                if col_name:
-                    order_updates[col_name] = 1
-
-            # Add spoke repairs and notes
-            order_updates["front_fix_spoke"] = front_spokes
-            order_updates["rear_fix_spoke"] = rear_spokes
-            order_updates["backend_notes"] = notes
-
+            # Build the order record updates.
+            # ────────────────────────────────────────────────────────────────
+            # Step 6 of the multi-tenancy migration: service data has moved
+            # entirely into `order_services` (line-items linked to
+            # `service_catalog`). The `orders` row now only carries metadata
+            # (notes, bike description) and the denormalized totals (price,
+            # final_price). The legacy boolean service columns + spoke counts
+            # + custom_service trio that lived on `orders` are no longer
+            # written here and are being dropped by migration 004.
+            # ────────────────────────────────────────────────────────────────
+            order_updates = {"backend_notes": notes}
             if bike_description:
                 order_updates["bike_description"] = bike_description
 
-            # Handle custom service
-            if custom_description and custom_price > 0:
-                order_updates["custom_service"] = 1
-                order_updates["custom_description"] = custom_description
-                order_updates["custom_service_price"] = custom_price
-            else:
-                order_updates["custom_service"] = 0
-                order_updates["custom_description"] = None
-                order_updates["custom_service_price"] = None
-
             # Calculate total price from selected services
             total_price = 0
-
             for label in selected_services:
                 _, price = services_with_prices.get(label, (None, None))
                 if price is not None:
                     total_price += price
 
-            # Calculate spoke repair costs ($33 base + $2 per spoke)
+            # Spoke repairs ($33 base + $2 per spoke)
             if front_spokes > 0:
                 total_price += 33 + 2 * front_spokes
-
             if rear_spokes > 0:
                 total_price += 33 + 2 * rear_spokes
 
-            # Add custom service price to total
+            # Custom service price
             if custom_price > 0:
                 total_price += custom_price
 
-            # Calculate final price with NYC tax (8.75%)
+            # Final price with NYC tax (8.75%)
             tax_rate = 0.0875
             final_price = total_price * (1 + tax_rate)
             order_updates["price"] = total_price
@@ -516,11 +500,15 @@ def lambda_handler(event, context):
             )
 
             # ────────────────────────────────────────────────────────────────
-            # DUAL-WRITE to order_services (multi-tenancy migration, step 4)
-            # The boolean columns on `orders` remain authoritative during the
-            # migration. order_services is a parallel write so step 5 can flip
-            # reads over once verified. A failure here is logged and swallowed —
-            # we never let the line-item write break the legacy invoice flow.
+            # WRITE order_services line items (multi-tenancy migration, step 6).
+            # As of step 6, order_services is the SOLE source of truth for
+            # service data — the legacy boolean columns on `orders` are dropped
+            # by migration 004. A failure here is still logged and swallowed so
+            # the order record + SMS invoice still go through (the invoice is
+            # built from in-memory request data, not from DB reads), but a
+            # failed write means the admin dashboard will show this order with
+            # no service line items until manually fixed. Watch the
+            # ⚠️ order_services write failed log carefully.
             # tenant_id is hardcoded to 1 (Brooklyn Bikery) until step 8 wires
             # up tenant resolution from the request URL.
             # ────────────────────────────────────────────────────────────────
@@ -578,12 +566,14 @@ def lambda_handler(event, context):
                         "VALUES (%s, %s, %s, %s, %s, %s)",
                         line_rows
                     )
-                print(f"✅ Dual-write: {len(line_rows)} order_services row(s) for order {order_id}")
-            except Exception as dual_write_err:
-                # Never let dual-write break the legacy invoice flow.
-                # Log and continue — the boolean-column UPDATE above is still
-                # the source of truth during the migration.
-                print(f"⚠️ Dual-write to order_services failed for order {order_id}: {dual_write_err}")
+                print(f"✅ order_services: {len(line_rows)} row(s) written for order {order_id}")
+            except Exception as os_write_err:
+                # Log and continue — the SMS invoice still goes out because it's
+                # built from in-memory request data, not a DB read. But the
+                # admin dashboard will show this order with no service line
+                # items. Investigate the log and manually insert the missing
+                # rows if this happens.
+                print(f"⚠️ order_services write failed for order {order_id}: {os_write_err}")
 
             # Get updated customer info for SMS
             cursor.execute("SELECT name, phone FROM customers WHERE id = %s", (customer_id,))
