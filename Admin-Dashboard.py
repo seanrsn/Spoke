@@ -102,6 +102,121 @@ def get_twilio_auth_token():
         print(f"Error fetching Twilio auth token: {e}")
         return None
 
+# ============================================
+# MULTI-TENANCY: ORDER SERVICES SYNTHESIS (step 5)
+# ============================================
+#
+# The legacy data model stored each performed service as a boolean column on
+# `orders` (front_flat, tune_up, ...) plus integer spoke counts and a custom
+# service trio (custom_service / custom_description / custom_service_price).
+#
+# Step 4 made Backend-Form.py dual-write to the new `order_services` line-item
+# table while still writing the legacy boolean columns. Step 5 (this code)
+# stops READING the legacy columns and instead reconstructs the same shape
+# from `order_services` in Python, so the API response stays identical for
+# the frontend. Step 6 will drop the legacy boolean columns from `orders`.
+#
+# The list below is the canonical set of "fixed" boolean service columns the
+# frontend expects. Keep in sync with Backend-Form.py:340-381 and migration
+# 003's service_catalog seed.
+
+_LEGACY_FIXED_SERVICE_COLUMNS = [
+    # Flat tire repairs
+    "front_flat", "rear_flat", "front_flat_ebike", "rear_flat_ebike",
+    # Brake adjustments
+    "front_brake_adj", "rear_brake_adj",
+    "front_brake_adj_ebike", "rear_brake_adj_ebike",
+    # Brake pads
+    "front_replace_vbrake_pads", "rear_replace_vbrake_pads",
+    "front_new_vbrake_pads", "rear_new_vbrake_pads",
+    "front_replace_disc_pads", "rear_replace_disc_pads",
+    "front_new_disc_pads", "rear_new_disc_pads",
+    "front_hydraulic_brake_bleed", "rear_hydraulic_brake_bleed",
+    # Tune-up
+    "tune_up",
+    # Derailleur
+    "front_derailleur_adj", "rear_derailleur_adj",
+    # Drivetrain
+    "replace_cassette", "new_bb", "replace_chain", "replace_crank_bb",
+    # Cables and lines
+    "replace_front_brake_line", "replace_rear_brake_line",
+    "replace_front_gear_line", "replace_rear_gear_line",
+    # Wheels
+    "front_wheel_true", "rear_wheel_true",
+    "front_repack_wheel", "rear_repack_wheel",
+    "replace_front_rotor", "replace_rear_rotor",
+    # Headset
+    "repack_headset", "repack_headset_ebike",
+    # E-bike and assembly
+    "ebike_diagnostic", "bike_assembly", "ebike_assembly",
+]
+
+
+def synthesize_order_services(cursor, tenant_id, order_ids):
+    """
+    Reconstruct the legacy boolean-column shape for the given orders, sourced
+    from `order_services` rows joined to `service_catalog`. Returns a dict
+    `{order_id: {column_name: value, ...}}`. Every order_id in the input list
+    gets an entry, defaulted to "no services performed" so callers can merge
+    blindly without KeyErrors on empty orders.
+
+    The output mirrors what the legacy SELECT used to produce:
+      - Fixed services: 0 or 1
+      - Spokes: integer count (0 = no spokes)
+      - custom_service: 0 or 1
+      - custom_description: text or None
+      - custom_service_price: float or None
+    """
+    if not order_ids:
+        return {}
+
+    # Initialize every order with "no services" defaults so merging is safe.
+    defaults = {col: 0 for col in _LEGACY_FIXED_SERVICE_COLUMNS}
+    defaults.update({
+        "front_fix_spoke": 0,
+        "rear_fix_spoke": 0,
+        "custom_service": 0,
+        "custom_description": None,
+        "custom_service_price": None,
+    })
+    result = {oid: dict(defaults) for oid in order_ids}
+
+    placeholders = ", ".join(["%s"] * len(order_ids))
+    cursor.execute(
+        f"""
+        SELECT os.order_id,
+               sc.code,
+               sc.pricing_formula,
+               os.quantity,
+               os.price_charged,
+               os.notes
+        FROM order_services os
+        JOIN service_catalog sc ON sc.id = os.service_catalog_id
+        WHERE os.tenant_id = %s AND os.order_id IN ({placeholders})
+        """,
+        (tenant_id, *order_ids),
+    )
+
+    for order_id, code, formula, quantity, price_charged, notes in cursor.fetchall():
+        slot = result.get(order_id)
+        if slot is None:
+            continue  # row references an order we didn't ask for; skip
+        if formula == "spoke":
+            # front_fix_spoke / rear_fix_spoke is an integer count, not a bool.
+            slot[code] = int(quantity)
+        elif formula == "custom":
+            slot["custom_service"] = 1
+            slot["custom_description"] = notes
+            slot["custom_service_price"] = (
+                float(price_charged) if price_charged is not None else None
+            )
+        else:
+            # Fixed-price service: set the corresponding boolean to 1.
+            slot[code] = 1
+
+    return result
+
+
 def validate_twilio_signature(event, raw_body):
     """
     Validate Twilio's X-Twilio-Signature against the request.
@@ -1231,65 +1346,24 @@ def lambda_handler(event, context):
         )
         cursor = conn.cursor()
 
-        # Build comprehensive query joining orders and customers
-        # Returns all service fields and pricing information
+        # Build query joining orders and customers.
+        # Service columns (booleans, spoke counts, custom_service trio) are NOT
+        # selected here — they're synthesized from `order_services` after the
+        # main fetch via synthesize_order_services(). This is step 5 of the
+        # multi-tenant migration: reads come from the new line-item table while
+        # the legacy boolean columns remain populated for safety until step 6.
         base_query = """
-        SELECT 
+        SELECT
             o.id,
             o.customer_id,
             o.date_of_service,
             o.bike_description,
             o.customer_notes,
             o.backend_notes,
-            o.front_flat,
-            o.rear_flat,
-            o.front_flat_ebike,
-            o.rear_flat_ebike,
-            o.front_brake_adj,
-            o.rear_brake_adj,
-            o.front_brake_adj_ebike,
-            o.rear_brake_adj_ebike,
-            o.front_replace_vbrake_pads,
-            o.rear_replace_vbrake_pads,
-            o.front_new_vbrake_pads,
-            o.rear_new_vbrake_pads,
-            o.front_replace_disc_pads,
-            o.rear_replace_disc_pads,
-            o.front_new_disc_pads,
-            o.rear_new_disc_pads,
-            o.front_hydraulic_brake_bleed,
-            o.rear_hydraulic_brake_bleed,
-            o.tune_up,
-            o.front_derailleur_adj,
-            o.rear_derailleur_adj,
-            o.replace_cassette,
-            o.new_bb,
-            o.replace_chain,
-            o.replace_crank_bb,
-            o.replace_front_brake_line,
-            o.replace_rear_brake_line,
-            o.replace_front_gear_line,
-            o.replace_rear_gear_line,
-            o.front_wheel_true,
-            o.rear_wheel_true,
-            o.front_repack_wheel,
-            o.rear_repack_wheel,
-            o.replace_front_rotor,
-            o.replace_rear_rotor,
-            o.repack_headset,
-            o.repack_headset_ebike,
-            o.ebike_diagnostic,
-            o.front_fix_spoke,
-            o.rear_fix_spoke,
-            o.bike_assembly,
-            o.ebike_assembly,
-            o.custom_service,
-            o.custom_description,
             c.name as customer_name,
             c.phone as customer_phone,
             o.price,
-            o.final_price,
-            o.custom_service_price
+            o.final_price
         FROM orders o
         JOIN customers c ON o.customer_id = c.id
         WHERE 1=1
@@ -1328,17 +1402,36 @@ def lambda_handler(event, context):
         from decimal import Decimal
         for row in results:
             order_dict = dict(zip(columns, row))
-            
+
             # Convert date objects to strings for JSON serialization
             if order_dict.get('date_of_service'):
                 order_dict['date_of_service'] = str(order_dict['date_of_service'])
-            
+
             # Convert Decimal types to float for JSON serialization
             for key, value in list(order_dict.items()):
                 if isinstance(value, Decimal):
                     order_dict[key] = float(value) if value is not None else None
-            
+
             orders.append(order_dict)
+
+        # Merge synthesized service data from order_services (step 5 of the
+        # multi-tenant migration). One batch query for every order returned,
+        # then per-order merge into the dict. Frontend sees the same shape
+        # the legacy SELECT used to produce, but the data now comes from
+        # the new line-item table. tenant_id hardcoded to 1 until step 8
+        # wires up URL-based tenant resolution.
+        if orders:
+            try:
+                order_ids = [o['id'] for o in orders]
+                service_data = synthesize_order_services(cursor, 1, order_ids)
+                for o in orders:
+                    o.update(service_data.get(o['id'], {}))
+            except Exception as synth_err:
+                # Fail loud in logs but don't break the search endpoint — the
+                # response will be missing service fields, frontend will show
+                # empty services. Better than 500ing the whole admin dashboard.
+                print(f"⚠️ synthesize_order_services failed: {synth_err}")
+                traceback.print_exc()
 
         cursor.close()
         conn.close()
