@@ -515,6 +515,76 @@ def lambda_handler(event, context):
                 list(order_updates.values()) + [order_id]
             )
 
+            # ────────────────────────────────────────────────────────────────
+            # DUAL-WRITE to order_services (multi-tenancy migration, step 4)
+            # The boolean columns on `orders` remain authoritative during the
+            # migration. order_services is a parallel write so step 5 can flip
+            # reads over once verified. A failure here is logged and swallowed —
+            # we never let the line-item write break the legacy invoice flow.
+            # tenant_id is hardcoded to 1 (Brooklyn Bikery) until step 8 wires
+            # up tenant resolution from the request URL.
+            # ────────────────────────────────────────────────────────────────
+            try:
+                TENANT_ID = 1
+
+                cursor.execute(
+                    "SELECT code, id FROM service_catalog WHERE tenant_id = %s",
+                    (TENANT_ID,)
+                )
+                catalog_map = {code: cid for code, cid in cursor.fetchall()}
+
+                # Idempotency: an admin may resubmit the same order. Clear
+                # existing line items and re-insert based on current selection.
+                cursor.execute(
+                    "DELETE FROM order_services WHERE tenant_id = %s AND order_id = %s",
+                    (TENANT_ID, order_id)
+                )
+
+                line_rows = []
+
+                # Fixed-price services selected on the form
+                for label in selected_services:
+                    col, price = services_with_prices.get(label, (None, None))
+                    if col and col in catalog_map and price is not None:
+                        line_rows.append(
+                            (TENANT_ID, order_id, catalog_map[col], 1, price, None)
+                        )
+
+                # Spoke services (quantity-based; price = 33 + 2 * count)
+                if front_spokes > 0 and "front_fix_spoke" in catalog_map:
+                    spoke_price = 33 + 2 * front_spokes
+                    line_rows.append(
+                        (TENANT_ID, order_id, catalog_map["front_fix_spoke"],
+                         front_spokes, spoke_price, None)
+                    )
+                if rear_spokes > 0 and "rear_fix_spoke" in catalog_map:
+                    spoke_price = 33 + 2 * rear_spokes
+                    line_rows.append(
+                        (TENANT_ID, order_id, catalog_map["rear_fix_spoke"],
+                         rear_spokes, spoke_price, None)
+                    )
+
+                # Custom service (ad-hoc; price + description set by admin)
+                if custom_description and custom_price > 0 and "custom_service" in catalog_map:
+                    line_rows.append(
+                        (TENANT_ID, order_id, catalog_map["custom_service"],
+                         1, custom_price, custom_description)
+                    )
+
+                if line_rows:
+                    cursor.executemany(
+                        "INSERT INTO order_services "
+                        "(tenant_id, order_id, service_catalog_id, quantity, price_charged, notes) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        line_rows
+                    )
+                print(f"✅ Dual-write: {len(line_rows)} order_services row(s) for order {order_id}")
+            except Exception as dual_write_err:
+                # Never let dual-write break the legacy invoice flow.
+                # Log and continue — the boolean-column UPDATE above is still
+                # the source of truth during the migration.
+                print(f"⚠️ Dual-write to order_services failed for order {order_id}: {dual_write_err}")
+
             # Get updated customer info for SMS
             cursor.execute("SELECT name, phone FROM customers WHERE id = %s", (customer_id,))
             crow = cursor.fetchone()
