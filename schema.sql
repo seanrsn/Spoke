@@ -1,12 +1,52 @@
 -- Brooklyn Bikery Database Schema
 -- MySQL database structure for customer management and service tracking
+--
+-- Migration history:
+--   001_add_tenants_table.sql (2026-05-17) — added tenants table for multi-tenancy
+--   002_add_tenant_id_columns.sql (2026-05-18) — added tenant_id to customers,
+--     orders, messages, push_subscriptions (NOT NULL DEFAULT 1, FK to tenants).
+--     Swapped customers.UNIQUE phone for composite UNIQUE (tenant_id, phone).
+--   003_add_service_catalog.sql + 003b_backfill_order_services.py (2026-05-18) —
+--     created service_catalog (43 rows seeded for Brooklyn Bikery, tenant 1) and
+--     order_services (266 rows backfilled from existing 60 orders, including 21
+--     reconciliation rows that capture historical price-vs-boolean discrepancies).
+--     Lambdas still read/write the legacy boolean columns on `orders` — service
+--     catalog reads/writes get wired up in step 4 (dual-write) and step 5
+--     (read switch).
+--
+-- NOTE: this file is partially stale vs. prod. Prod has tables `messages` and
+-- `push_subscriptions` that were never in this schema file; prod does NOT have
+-- a `payments` table (pricing columns live on `orders`). A schema reconciliation
+-- pass is on the todo list.
 
 -- Create database
-CREATE DATABASE IF NOT EXISTS `bikeshop` 
-DEFAULT CHARACTER SET utf8mb4 
+CREATE DATABASE IF NOT EXISTS `bikeshop`
+DEFAULT CHARACTER SET utf8mb4
 COLLATE utf8mb4_0900_ai_ci;
 
 USE `bikeshop`;
+
+-- Tenants table
+-- Per-shop config (branding, Twilio creds, tax rate, CORS, admin auth).
+-- Brooklyn Bikery is tenant_id=1.
+CREATE TABLE `tenants` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `slug` varchar(50) NOT NULL,
+  `display_name` varchar(100) NOT NULL,
+  `phone` varchar(20) DEFAULT NULL,
+  `address` text,
+  `tax_rate` decimal(5,4) NOT NULL DEFAULT '0.0875',
+  `allowed_origin` varchar(255) NOT NULL,
+  `twilio_account_sid` varchar(100) NOT NULL,
+  `twilio_auth_token_secret_arn` varchar(255) NOT NULL,
+  `twilio_from_number` varchar(20) NOT NULL,
+  `sms_sender_name` varchar(50) NOT NULL,
+  `admin_password_secret_arn` varchar(255) NOT NULL,
+  `status` enum('active','suspended') NOT NULL DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Customers table
 -- Stores customer contact information with unique phone constraint
