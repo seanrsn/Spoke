@@ -1034,10 +1034,16 @@ function logout() {
 async function loadLatestPhone() {
   const urlParams = new URLSearchParams(window.location.search);
 
-  // If URL has a phone param (e.g. coming from admin dashboard), switch to Edit Existing mode
+  // If URL has a phone param (e.g. coming from admin dashboard's "Edit
+  // Services" button), switch to Edit Existing mode for that specific
+  // customer. IMPORTANT: set the lookupPhone BEFORE calling setMode —
+  // setMode's "edit existing" branch kicks off reloadLatestPhone() which
+  // would otherwise clobber our URL phone with whoever the most recent
+  // customer in the DB happens to be (was causing edits to land on the
+  // wrong customer's most recent order).
   if (urlParams.get('phone')) {
-    setMode(false);
     document.getElementById('lookupPhone').value = urlParams.get('phone');
+    setMode(false);
   }
   if (urlParams.get('name')) {
     document.querySelector('input[name="name"]').value = urlParams.get('name');
@@ -1076,7 +1082,12 @@ function setMode(newCustomer) {
     document.getElementById('ncPhone').value = '';
   } else {
     btn.innerHTML = '<i data-lucide="plus"></i>New Order';
-    reloadLatestPhone();
+    // Only auto-populate with the latest customer's phone if the field is
+    // empty. If the URL already set a specific phone (Edit Services flow),
+    // we must not clobber it.
+    if (!document.getElementById('lookupPhone').value.trim()) {
+      reloadLatestPhone();
+    }
   }
   if (window.lucide) lucide.createIcons();
 }
