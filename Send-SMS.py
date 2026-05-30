@@ -36,73 +36,35 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 s3 = boto3.client("s3")
 secrets = boto3.client("secretsmanager")
 
-# Lazy import — only opened when an SMS job needs DB tenant lookup. Keeps
-# push-notification-only invocations from paying the import cost.
-def _pymysql():
-    import pymysql
-    return pymysql
-
 # ============================================
-# TENANT CONFIG (multi-tenancy migration, step 7)
+# TWILIO CREDS RESOLUTION (multi-tenancy migration, step 7 — revised)
+#
+# SendSMS lives OUTSIDE the VPC and therefore can't talk to RDS. So instead
+# of looking up tenant config in the DB, the S3 job payload carries the
+# Twilio credentials directly (Backend-Form just resolved them when it
+# created the job). The auth_token still lives in Secrets Manager —
+# Secrets Manager is reachable from outside the VPC.
+#
+# Legacy fallback: any in-flight jobs from before this change lack the
+# new fields. For those we fall back to the original "twilio-credentials"
+# secret which has the same shape as before.
 # ============================================
-_TENANT_CACHE: dict = {}
+LEGACY_TWILIO_SECRET = "twilio-credentials"
 
-def get_tenant(tenant_id: int = 1) -> dict:
+def _resolve_twilio_creds(job: dict):
     """
-    Load per-tenant config from the `tenants` table. Cached for the lifetime
-    of the warm container. SendSMS only needs this when actually sending SMS
-    (S3 jobs carry tenant_id) — push notification invocations skip it.
+    Return (account_sid, auth_token, from_number) for an S3 SMS job. Prefers
+    the new in-payload fields; falls back to the legacy Brooklyn Bikery
+    twilio-credentials secret for jobs queued before the step 7 refactor.
     """
-    if tenant_id in _TENANT_CACHE:
-        return _TENANT_CACHE[tenant_id]
-    db_resp = secrets.get_secret_value(SecretId="bikeshop-credentials")
-    db_creds = json.loads(db_resp["SecretString"])
-    pymysql = _pymysql()
-    conn = pymysql.connect(
-        host=db_creds["host"],
-        user=db_creds["user"],
-        password=db_creds["password"],
-        database=db_creds["database"],
-        connect_timeout=5,
-        charset="utf8mb4",
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, slug, twilio_account_sid, twilio_auth_token_secret_arn, "
-                "twilio_from_number, status FROM tenants WHERE id = %s",
-                (tenant_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise RuntimeError(f"Tenant {tenant_id} not found")
-            cols = [d[0] for d in cur.description]
-            t = dict(zip(cols, row))
-            if t["status"] != "active":
-                raise RuntimeError(
-                    f"Tenant {tenant_id} ({t['slug']}) status is {t['status']!r}"
-                )
-            _TENANT_CACHE[tenant_id] = t
-            return t
-    finally:
-        conn.close()
-
-# ============================================
-# TWILIO API HELPERS
-# ============================================
-def _get_twilio_creds(tenant: dict):
-    """
-    Resolve Twilio credentials for the given tenant. account_sid and from_number
-    are direct columns on the tenants table; auth_token lives in the secret
-    referenced by twilio_auth_token_secret_arn.
-
-    Returns:
-        Tuple of (account_sid, auth_token, from_number_or_None)
-    """
-    resp = secrets.get_secret_value(SecretId=tenant["twilio_auth_token_secret_arn"])
+    arn = job.get("twilio_auth_token_secret_arn") or LEGACY_TWILIO_SECRET
+    resp = secrets.get_secret_value(SecretId=arn)
     data = json.loads(resp.get("SecretString", "{}"))
     auth_token = data.get("auth_token") or data.get("authToken") or ""
-    return tenant["twilio_account_sid"], auth_token, tenant.get("twilio_from_number")
+
+    account_sid = job.get("twilio_account_sid") or data.get("account_sid")
+    from_number = job.get("twilio_from_number") or data.get("from_number")
+    return account_sid, auth_token, from_number
 
 def _twilio_post(path: str, account_sid: str, auth_token: str, form: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -133,17 +95,17 @@ def _twilio_post(path: str, account_sid: str, auth_token: str, form: Dict[str, s
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode("utf-8"))
 
-def send_sms(to: str, body: str, media_url: str | None = None, tenant: dict | None = None) -> Dict[str, Any]:
+def send_sms(to: str, body: str, media_url: str | None = None, *, job: dict | None = None) -> Dict[str, Any]:
     """
-    Send SMS via Twilio API using the given tenant's Twilio account.
+    Send SMS via Twilio API using credentials from the S3 job payload.
 
     Args:
         to: Recipient phone number (E.164 format: +1XXXXXXXXXX)
         body: Message text
         media_url: Optional MMS media URL
-        tenant: tenant config dict (from get_tenant). If None, defaults to
-                tenant_id=1 (Brooklyn Bikery) — kept for backward compat with
-                any callers not yet wired through step 7.
+        job: The S3 job dict, used to resolve per-tenant Twilio credentials.
+             If None (e.g. push-notification path), uses the legacy
+             twilio-credentials secret.
 
     Returns:
         Twilio API response containing message SID and status
@@ -151,18 +113,12 @@ def send_sms(to: str, body: str, media_url: str | None = None, tenant: dict | No
     if not to or not body:
         raise ValueError("'to' and 'body' are required")
 
-    if tenant is None:
-        tenant = get_tenant(1)
-
-    # Per-tenant Twilio creds: account_sid + from_number come from the tenants
-    # table directly; auth_token is in the secret referenced by the tenant's
-    # twilio_auth_token_secret_arn.
-    account_sid, auth_token, from_num = _get_twilio_creds(tenant)
+    account_sid, auth_token, from_num = _resolve_twilio_creds(job or {})
 
     # Must have either messaging service SID or from number
     if not (TWILIO_MESSAGING_SERVICE_SID or from_num):
         raise RuntimeError(
-            f"Tenant {tenant.get('slug')!r} has no twilio_from_number and no "
+            "No twilio_from_number on job or in secret, and no "
             "TWILIO_MESSAGING_SERVICE_SID env var set"
         )
 
@@ -362,17 +318,16 @@ def lambda_handler(event, context):
             # Support both camelCase (from admin dashboard) and snake_case (legacy)
             media_url = msg.get("mediaUrl") or msg.get("media_url")  # Optional MMS attachment
 
-            # Resolve tenant — added to job payload in step 7. In-flight legacy
-            # jobs from before step 7 lacked tenant_id; default to 1 (Brooklyn
-            # Bikery) so we drain the queue without dropping invoices.
-            tenant_id = int(msg.get("tenant_id") or 1)
-            tenant = get_tenant(tenant_id)
+            # Twilio creds come straight from the job payload (added by
+            # Backend-Form when it knew the tenant). Legacy jobs missing the
+            # fields fall back to the original twilio-credentials secret via
+            # _resolve_twilio_creds — see send_sms() for details.
+            tenant_id = msg.get("tenant_id", "(legacy)")
 
-            # Send SMS/MMS via Twilio (using this tenant's account)
             msg_type = "MMS" if media_url else "SMS"
-            print(f"📞 Sending {msg_type} to {to} via tenant {tenant['slug']!r}"
+            print(f"📞 Sending {msg_type} to {to} for tenant_id={tenant_id}"
                   + (f" with media: {media_url}" if media_url else ""))
-            resp = send_sms(to, text, media_url, tenant=tenant)
+            resp = send_sms(to, text, media_url, job=msg)
             print({"ok": True, "type": msg_type, "twilio_sid": resp.get("sid"), "status": resp.get("status"), "to": to})
 
             # Delete job file after successful send
