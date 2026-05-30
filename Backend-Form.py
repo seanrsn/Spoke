@@ -698,10 +698,14 @@ def lambda_handler(event, context):
         if not target_phone:
             return response(200, {"message": "Success (no SMS sent: invalid/missing customer phone)", "order_id": order_id})
 
-        # Upload SMS job to S3 for processing by separate SMS Lambda. The job
-        # now carries tenant_id so SendSMS can resolve the right shop's Twilio
-        # account at send time (step 7 of multi-tenancy migration). SendSMS
-        # falls back to tenant_id=1 for any in-flight jobs that lack the field.
+        # Upload SMS job to S3 for processing by separate SMS Lambda.
+        #
+        # The job payload carries the tenant's Twilio credentials directly so
+        # SendSMS doesn't have to query the DB (SendSMS is NOT in a VPC and
+        # therefore can't reach the RDS instance). Secrets Manager is
+        # reachable from outside the VPC, so passing the secret ARN works.
+        # account_sid + from_number are not secrets (just identifiers), so
+        # they go in the payload as plain values.
         s3_client = boto3.client('s3')
         sms_bucket = 'brooklyn-bikery-sms'
         job_key = f"sms/invoice_{order_id}_{uuid.uuid4().hex[:8]}.json"
@@ -712,6 +716,9 @@ def lambda_handler(event, context):
                 "tenant_id": tenant["id"],
                 "to": target_phone,
                 "body": invoice_text,
+                "twilio_account_sid": tenant["twilio_account_sid"],
+                "twilio_auth_token_secret_arn": tenant["twilio_auth_token_secret_arn"],
+                "twilio_from_number": tenant["twilio_from_number"],
             }),
             ContentType='application/json'
         )
