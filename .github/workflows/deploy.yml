@@ -98,7 +98,7 @@ jobs:
             ["Admin-Dashboard.py"]="AdminDashboard:1"
             ["Backend-Form.py"]="SubmitBackendForm:1"
             ["Customer-Form.py"]="SubmitCustomerForm:1"
-            ["Send-SMS.py"]="SendSMS:0"
+            ["Send-SMS.py"]="SendSMS:1"
           )
 
           for SRC in "${!FUNCTIONS[@]}"; do
