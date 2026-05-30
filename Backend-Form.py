@@ -140,6 +140,62 @@ def get_db_secret():
     return json.loads(client.get_secret_value(SecretId="bikeshop-credentials")["SecretString"])
 
 # ============================================
+# TENANT CONFIG (multi-tenancy migration, step 7)
+# Per-warm-container cache. tenant_id hardcoded to 1 (Brooklyn Bikery) at
+# call sites until step 8 wires up URL-based tenant resolution.
+# ============================================
+_TENANT_CACHE: dict = {}
+
+def get_tenant(tenant_id: int = 1) -> dict:
+    """
+    Load per-tenant config from the `tenants` table. Cached for the lifetime
+    of the warm container — first call hits the DB, subsequent calls are free.
+    Raises on missing tenant or non-active status (defensive: a shop we've
+    suspended for non-payment shouldn't be able to process orders).
+    """
+    if tenant_id in _TENANT_CACHE:
+        return _TENANT_CACHE[tenant_id]
+    secret = get_db_secret()
+    conn = pymysql.connect(
+        host=secret["host"],
+        user=secret["user"],
+        password=secret["password"],
+        database=secret["database"],
+        connect_timeout=5,
+        charset="utf8mb4",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, slug, display_name, phone, address, tax_rate, "
+                "allowed_origin, twilio_account_sid, twilio_auth_token_secret_arn, "
+                "twilio_from_number, sms_sender_name, admin_password_secret_arn, "
+                "status FROM tenants WHERE id = %s",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(f"Tenant {tenant_id} not found")
+            cols = [d[0] for d in cur.description]
+            tenant = dict(zip(cols, row))
+            if tenant["status"] != "active":
+                raise RuntimeError(
+                    f"Tenant {tenant_id} ({tenant['slug']}) status is "
+                    f"{tenant['status']!r}, refusing to serve"
+                )
+            _TENANT_CACHE[tenant_id] = tenant
+            return tenant
+    finally:
+        conn.close()
+
+def get_twilio_auth_token_for_tenant(tenant: dict) -> str:
+    """Resolve the per-tenant Twilio auth token from Secrets Manager."""
+    client = boto3.client("secretsmanager", region_name=REGION)
+    resp = client.get_secret_value(SecretId=tenant["twilio_auth_token_secret_arn"])
+    data = json.loads(resp["SecretString"])
+    return data.get("auth_token") or data.get("authToken") or ""
+
+# ============================================
 # HELPERS
 # ============================================
 def normalize_us_phone(phone_str: str) -> str | None:
@@ -166,13 +222,19 @@ def normalize_us_phone(phone_str: str) -> str | None:
     
     return None
 
-def build_invoice_text(customer, order_id, date_str, selected_services, front_spokes, rear_spokes, prices_map, subtotal, tax_rate, final_total, backend_notes, bike_description="", custom_description="", custom_price=0):
+def build_invoice_text(customer, order_id, date_str, selected_services, front_spokes, rear_spokes, prices_map, subtotal, tax_rate, final_total, backend_notes, bike_description="", custom_description="", custom_price=0, tenant_brand="BROOKLYN BIKERY"):
     """
     Build formatted SMS invoice text.
     Includes service list, pricing breakdown, tax calculation, and total.
+
+    tenant_brand defaults to BROOKLYN BIKERY for backward compatibility but
+    callers should pass tenant['sms_sender_name'].upper() to render the right
+    shop's brand. Hours and payment methods below are still Brooklyn Bikery-
+    specific — they'll need to move to tenant config in step 9 before any
+    second shop launches.
     """
     lines = []
-    lines.append("🚴 BROOKLYN BIKERY")
+    lines.append(f"🚴 {tenant_brand}")
     lines.append("")
     lines.append(f"📅 {date_str}")
     lines.append(f"👤 {customer.get('name') or 'Customer'}")
@@ -320,6 +382,13 @@ def lambda_handler(event, context):
     # POST request - Submit services to existing order
     # ============================================
     try:
+        # Resolve tenant config (multi-tenancy migration, step 7). tenant_id is
+        # hardcoded to 1 (Brooklyn Bikery) until step 8 wires up URL routing.
+        # Fail-fast: if tenant lookup breaks, the whole request fails — better
+        # than silently using stale defaults that might charge wrong tax or
+        # send SMS from the wrong shop's number.
+        tenant = get_tenant(1)
+
         body = json.loads(event.get("body", "{}"))
 
         # Extract form data
@@ -479,8 +548,8 @@ def lambda_handler(event, context):
             if custom_price > 0:
                 total_price += custom_price
 
-            # Final price with NYC tax (8.75%)
-            tax_rate = 0.0875
+            # Final price with per-tenant tax rate (Brooklyn Bikery = 0.0875 NYC)
+            tax_rate = float(tenant["tax_rate"])
             final_price = total_price * (1 + tax_rate)
             order_updates["price"] = total_price
             order_updates["final_price"] = final_price
@@ -603,22 +672,20 @@ def lambda_handler(event, context):
                     backend_notes=notes,
                     bike_description=bike_desc,
                     custom_description=custom_description,
-                    custom_price=custom_price
+                    custom_price=custom_price,
+                    tenant_brand=tenant["sms_sender_name"].upper(),
                 )
 
-                # Store outbound invoice in messages table so it appears in conversation history
+                # Store outbound invoice in messages table so it appears in
+                # conversation history. from_number is the tenant's Twilio
+                # sender — read straight from the tenants table column rather
+                # than fetching a Secrets Manager value to look it up.
                 try:
-                    twilio_from = ""
-                    try:
-                        sm_client = boto3.client("secretsmanager", region_name=REGION)
-                        twilio_data = json.loads(sm_client.get_secret_value(SecretId="twilio-credentials")["SecretString"])
-                        twilio_from = twilio_data.get("from_number", "")
-                    except Exception:
-                        pass
+                    twilio_from = tenant["twilio_from_number"]
                     cursor.execute("""
-                        INSERT INTO messages (phone, direction, body, status, from_number, to_number)
-                        VALUES (%s, 'outbound', %s, 'queued', %s, %s)
-                    """, (target_phone, invoice_text, twilio_from, target_phone))
+                        INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number)
+                        VALUES (%s, %s, 'outbound', %s, 'queued', %s, %s)
+                    """, (tenant["id"], target_phone, invoice_text, twilio_from, target_phone))
                 except Exception as msg_err:
                     print(f"⚠️ Failed to store invoice in messages table: {msg_err}")
 
@@ -631,14 +698,21 @@ def lambda_handler(event, context):
         if not target_phone:
             return response(200, {"message": "Success (no SMS sent: invalid/missing customer phone)", "order_id": order_id})
 
-        # Upload SMS job to S3 for processing by separate SMS Lambda
+        # Upload SMS job to S3 for processing by separate SMS Lambda. The job
+        # now carries tenant_id so SendSMS can resolve the right shop's Twilio
+        # account at send time (step 7 of multi-tenancy migration). SendSMS
+        # falls back to tenant_id=1 for any in-flight jobs that lack the field.
         s3_client = boto3.client('s3')
         sms_bucket = 'brooklyn-bikery-sms'
         job_key = f"sms/invoice_{order_id}_{uuid.uuid4().hex[:8]}.json"
         s3_client.put_object(
             Bucket=sms_bucket,
             Key=job_key,
-            Body=json.dumps({"to": target_phone, "body": invoice_text}),
+            Body=json.dumps({
+                "tenant_id": tenant["id"],
+                "to": target_phone,
+                "body": invoice_text,
+            }),
             ContentType='application/json'
         )
 

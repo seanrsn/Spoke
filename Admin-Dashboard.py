@@ -50,14 +50,62 @@ def get_secret():
     resp = client.get_secret_value(SecretId="bikeshop-credentials")
     return json.loads(resp["SecretString"])
 
+# ============================================
+# TENANT CONFIG (multi-tenancy migration, step 7)
+# Per-warm-container cache. tenant_id hardcoded to 1 (Brooklyn Bikery) at
+# call sites until step 8 wires up URL-based tenant resolution.
+# ============================================
+_TENANT_CACHE: dict = {}
+
+def get_tenant(tenant_id: int = 1) -> dict:
+    """
+    Load per-tenant config from the `tenants` table. Cached for the lifetime
+    of the warm container.
+    """
+    if tenant_id in _TENANT_CACHE:
+        return _TENANT_CACHE[tenant_id]
+    secret = get_secret()  # bikeshop-credentials (shared DB)
+    conn = pymysql.connect(
+        host=secret["host"],
+        user=secret["user"],
+        password=secret["password"],
+        database=secret["database"],
+        connect_timeout=5,
+        charset="utf8mb4",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, slug, display_name, phone, address, tax_rate, "
+                "allowed_origin, twilio_account_sid, twilio_auth_token_secret_arn, "
+                "twilio_from_number, sms_sender_name, admin_password_secret_arn, "
+                "status FROM tenants WHERE id = %s",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(f"Tenant {tenant_id} not found")
+            cols = [d[0] for d in cur.description]
+            t = dict(zip(cols, row))
+            if t["status"] != "active":
+                raise RuntimeError(
+                    f"Tenant {tenant_id} ({t['slug']}) status is {t['status']!r}"
+                )
+            _TENANT_CACHE[tenant_id] = t
+            return t
+    finally:
+        conn.close()
+
 def get_admin_password():
     """
-    Retrieve admin password from AWS Secrets Manager.
+    Retrieve admin password from AWS Secrets Manager. The secret ARN is now
+    per-tenant (was hardcoded to 'bikery-admin-password' before step 7).
     Used for verifying login attempts.
     """
     try:
+        tenant = get_tenant(1)
         client = boto3.client("secretsmanager", region_name=REGION)
-        resp = client.get_secret_value(SecretId="bikery-admin-password")
+        resp = client.get_secret_value(SecretId=tenant["admin_password_secret_arn"])
         secret_data = json.loads(resp["SecretString"])
         return secret_data.get("password", "")
     except Exception as e:
@@ -91,10 +139,12 @@ def get_jwt_secret():
         raise
 
 def get_twilio_auth_token():
-    """Fetch Twilio auth token from Secrets Manager for webhook signature validation."""
+    """Fetch Twilio auth token from Secrets Manager for webhook signature validation.
+    Secret ARN is now per-tenant (step 7). tenant_id=1 hardcoded until step 8."""
     try:
+        tenant = get_tenant(1)
         client = boto3.client("secretsmanager", region_name=REGION)
-        resp = client.get_secret_value(SecretId="twilio-credentials")
+        resp = client.get_secret_value(SecretId=tenant["twilio_auth_token_secret_arn"])
         secret_data = json.loads(resp["SecretString"])
         # Try both common key names
         return secret_data.get("auth_token") or secret_data.get("authToken") or ""
@@ -732,12 +782,18 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
+            # Resolve tenant for this inbound webhook. tenant_id=1 hardcoded
+            # for step 7. In step 8 (when multi-tenant is real) we'll match
+            # tenants.twilio_from_number against the Twilio webhook's `To`
+            # field to pick the right shop.
+            tenant = get_tenant(1)
+
             # Use from_number as the phone (customer's number)
             cursor.execute("""
-                INSERT INTO messages (phone, direction, body, status, twilio_sid, from_number, to_number)
-                VALUES (%s, 'inbound', %s, 'received', %s, %s, %s)
+                INSERT INTO messages (tenant_id, phone, direction, body, status, twilio_sid, from_number, to_number)
+                VALUES (%s, %s, 'inbound', %s, 'received', %s, %s, %s)
                 ON DUPLICATE KEY UPDATE id=id
-            """, (from_number, message_body, twilio_sid, from_number, to_number))
+            """, (tenant["id"], from_number, message_body, twilio_sid, from_number, to_number))
 
             conn.commit()
             cursor.close()
@@ -852,16 +908,16 @@ def lambda_handler(event, context):
                 )
                 cursor = conn.cursor()
 
-                # Get Twilio from number from secrets for the record
-                twilio_secret_client = boto3.client("secretsmanager", region_name=REGION)
-                twilio_resp = twilio_secret_client.get_secret_value(SecretId="twilio-credentials")
-                twilio_data = json.loads(twilio_resp.get("SecretString", "{}"))
-                from_number = twilio_data.get("from_number", "")
+                # Read Twilio from-number straight from tenants table column
+                # (no Secrets Manager round-trip needed since it's now a
+                # dedicated DB column as of step 1).
+                tenant = get_tenant(1)
+                from_number = tenant["twilio_from_number"]
 
                 cursor.execute("""
-                    INSERT INTO messages (phone, direction, body, status, from_number, to_number)
-                    VALUES (%s, 'outbound', %s, 'queued', %s, %s)
-                """, (to_phone_normalized, message_body, from_number, to_phone_normalized))
+                    INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number)
+                    VALUES (%s, %s, 'outbound', %s, 'queued', %s, %s)
+                """, (tenant["id"], to_phone_normalized, message_body, from_number, to_phone_normalized))
 
                 conn.commit()
                 cursor.close()

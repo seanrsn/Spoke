@@ -26,10 +26,9 @@ except Exception as e:
 # ============================================
 # ENVIRONMENT CONFIGURATION
 # ============================================
-SECRETS_NAME = os.environ.get("TWILIO_SECRET_NAME", "twilio-credentials")
-TWILIO_FROM = os.environ.get("TWILIO_FROM")  # Optional: override from number
 TWILIO_MESSAGING_SERVICE_SID = os.environ.get("TWILIO_MESSAGING_SERVICE_SID")  # Optional: use messaging service
 FAILED_PREFIX = os.environ.get("FAILED_PREFIX", "failed/")  # Folder for failed jobs (set to "" to disable)
+REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 # ============================================
 # AWS CLIENTS
@@ -37,19 +36,73 @@ FAILED_PREFIX = os.environ.get("FAILED_PREFIX", "failed/")  # Folder for failed 
 s3 = boto3.client("s3")
 secrets = boto3.client("secretsmanager")
 
+# Lazy import — only opened when an SMS job needs DB tenant lookup. Keeps
+# push-notification-only invocations from paying the import cost.
+def _pymysql():
+    import pymysql
+    return pymysql
+
+# ============================================
+# TENANT CONFIG (multi-tenancy migration, step 7)
+# ============================================
+_TENANT_CACHE: dict = {}
+
+def get_tenant(tenant_id: int = 1) -> dict:
+    """
+    Load per-tenant config from the `tenants` table. Cached for the lifetime
+    of the warm container. SendSMS only needs this when actually sending SMS
+    (S3 jobs carry tenant_id) — push notification invocations skip it.
+    """
+    if tenant_id in _TENANT_CACHE:
+        return _TENANT_CACHE[tenant_id]
+    db_resp = secrets.get_secret_value(SecretId="bikeshop-credentials")
+    db_creds = json.loads(db_resp["SecretString"])
+    pymysql = _pymysql()
+    conn = pymysql.connect(
+        host=db_creds["host"],
+        user=db_creds["user"],
+        password=db_creds["password"],
+        database=db_creds["database"],
+        connect_timeout=5,
+        charset="utf8mb4",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, slug, twilio_account_sid, twilio_auth_token_secret_arn, "
+                "twilio_from_number, status FROM tenants WHERE id = %s",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(f"Tenant {tenant_id} not found")
+            cols = [d[0] for d in cur.description]
+            t = dict(zip(cols, row))
+            if t["status"] != "active":
+                raise RuntimeError(
+                    f"Tenant {tenant_id} ({t['slug']}) status is {t['status']!r}"
+                )
+            _TENANT_CACHE[tenant_id] = t
+            return t
+    finally:
+        conn.close()
+
 # ============================================
 # TWILIO API HELPERS
 # ============================================
-def _get_twilio_creds():
+def _get_twilio_creds(tenant: dict):
     """
-    Retrieve Twilio credentials from AWS Secrets Manager.
-    
+    Resolve Twilio credentials for the given tenant. account_sid and from_number
+    are direct columns on the tenants table; auth_token lives in the secret
+    referenced by twilio_auth_token_secret_arn.
+
     Returns:
         Tuple of (account_sid, auth_token, from_number_or_None)
     """
-    resp = secrets.get_secret_value(SecretId=SECRETS_NAME)
+    resp = secrets.get_secret_value(SecretId=tenant["twilio_auth_token_secret_arn"])
     data = json.loads(resp.get("SecretString", "{}"))
-    return data["account_sid"], data["auth_token"], data.get("from_number")
+    auth_token = data.get("auth_token") or data.get("authToken") or ""
+    return tenant["twilio_account_sid"], auth_token, tenant.get("twilio_from_number")
 
 def _twilio_post(path: str, account_sid: str, auth_token: str, form: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -80,30 +133,38 @@ def _twilio_post(path: str, account_sid: str, auth_token: str, form: Dict[str, s
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode("utf-8"))
 
-def send_sms(to: str, body: str, media_url: str | None = None) -> Dict[str, Any]:
+def send_sms(to: str, body: str, media_url: str | None = None, tenant: dict | None = None) -> Dict[str, Any]:
     """
-    Send SMS via Twilio API.
-    
+    Send SMS via Twilio API using the given tenant's Twilio account.
+
     Args:
         to: Recipient phone number (E.164 format: +1XXXXXXXXXX)
         body: Message text
         media_url: Optional MMS media URL
-    
+        tenant: tenant config dict (from get_tenant). If None, defaults to
+                tenant_id=1 (Brooklyn Bikery) — kept for backward compat with
+                any callers not yet wired through step 7.
+
     Returns:
         Twilio API response containing message SID and status
     """
     if not to or not body:
         raise ValueError("'to' and 'body' are required")
 
-    # Get credentials from Secrets Manager
-    account_sid, auth_token, secret_from = _get_twilio_creds()
-    
-    # Determine 'from' number: env var takes precedence, fallback to secret
-    from_num = TWILIO_FROM or secret_from
+    if tenant is None:
+        tenant = get_tenant(1)
+
+    # Per-tenant Twilio creds: account_sid + from_number come from the tenants
+    # table directly; auth_token is in the secret referenced by the tenant's
+    # twilio_auth_token_secret_arn.
+    account_sid, auth_token, from_num = _get_twilio_creds(tenant)
 
     # Must have either messaging service SID or from number
     if not (TWILIO_MESSAGING_SERVICE_SID or from_num):
-        raise RuntimeError("Set TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM or secret.from_number")
+        raise RuntimeError(
+            f"Tenant {tenant.get('slug')!r} has no twilio_from_number and no "
+            "TWILIO_MESSAGING_SERVICE_SID env var set"
+        )
 
     # Build request fields
     fields = {"To": to, "Body": body}
@@ -301,10 +362,17 @@ def lambda_handler(event, context):
             # Support both camelCase (from admin dashboard) and snake_case (legacy)
             media_url = msg.get("mediaUrl") or msg.get("media_url")  # Optional MMS attachment
 
-            # Send SMS/MMS via Twilio
+            # Resolve tenant — added to job payload in step 7. In-flight legacy
+            # jobs from before step 7 lacked tenant_id; default to 1 (Brooklyn
+            # Bikery) so we drain the queue without dropping invoices.
+            tenant_id = int(msg.get("tenant_id") or 1)
+            tenant = get_tenant(tenant_id)
+
+            # Send SMS/MMS via Twilio (using this tenant's account)
             msg_type = "MMS" if media_url else "SMS"
-            print(f"📞 Sending {msg_type} to {to}" + (f" with media: {media_url}" if media_url else ""))
-            resp = send_sms(to, text, media_url)
+            print(f"📞 Sending {msg_type} to {to} via tenant {tenant['slug']!r}"
+                  + (f" with media: {media_url}" if media_url else ""))
+            resp = send_sms(to, text, media_url, tenant=tenant)
             print({"ok": True, "type": msg_type, "twilio_sid": resp.get("sid"), "status": resp.get("status"), "to": to})
 
             # Delete job file after successful send
