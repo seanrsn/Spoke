@@ -24,6 +24,13 @@ import pymysql
 REGION = os.getenv("AWS_REGION", "us-east-1")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://brooklynbikery.com")
 
+# tenant_id is hardcoded to 1 (Brooklyn Bikery) until the multi-tenancy
+# migration (step 8) wires up tenant resolution from the request URL.
+# Module-level so the edit/lookup path and the order_services writer both
+# reference the same constant (a local assignment would shadow it and break
+# earlier references with UnboundLocalError).
+TENANT_ID = 1
+
 # CORS headers for cross-origin requests from admin dashboard
 CORS = {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
@@ -493,21 +500,69 @@ def lambda_handler(event, context):
                 order_date = today_str
 
             else:
-                # ── Existing customer flow: lookup by phone ───────────────────
-                # Use last 10 digits to handle mixed phone storage formats
-                lookup_digits_10 = "".join(ch for ch in (lookup_phone or "") if ch.isdigit())[-10:]
-                cursor.execute("SELECT id FROM customers WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (lookup_digits_10,))
-                row = cursor.fetchone()
-                if not row:
-                    return response(400, {"message": "Customer not found"})
-                customer_id = row[0]
+                # ── Existing customer / edit flow ─────────────────────────────
+                #
+                # WRONG-ORDER CORRUPTION FIX: prefer an explicit orderId. The
+                # admin dashboard's "Edit Services" button now always sends the
+                # exact order it opened, so we edit THAT order — never "the most
+                # recent order for whatever phone is in the box". The old
+                # phone -> most-recent-order heuristic meant a stale or mangled
+                # lookupPhone could silently edit a *different customer's* order
+                # (this corrupted two real customers' orders). orderId wins.
+                order_id_param = body.get("orderId")
 
-                # Get most recent order for this customer
-                cursor.execute("SELECT id, date_of_service FROM orders WHERE customer_id = %s ORDER BY id DESC LIMIT 1", (customer_id,))
-                row = cursor.fetchone()
-                if not row:
-                    return response(400, {"message": "No existing order found for this customer."})
-                order_id, order_date = row[0], row[1]
+                if order_id_param not in (None, "", "null"):
+                    try:
+                        oid = int(order_id_param)
+                    except (TypeError, ValueError):
+                        return response(400, {"message": f"Invalid orderId: {order_id_param!r}"})
+
+                    cursor.execute(
+                        "SELECT id, date_of_service, customer_id FROM orders "
+                        "WHERE id = %s AND tenant_id = %s",
+                        (oid, TENANT_ID),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        return response(404, {"message": f"Order {oid} not found."})
+                    order_id, order_date, customer_id = row[0], row[1], row[2]
+
+                    # Defense-in-depth: if a lookupPhone was also supplied, it
+                    # MUST match the order's real customer. A mismatch means the
+                    # form's state is inconsistent (e.g. stale JS) — refuse the
+                    # edit loudly rather than risk corrupting the wrong person.
+                    if lookup_phone:
+                        lookup_digits_10 = "".join(ch for ch in lookup_phone if ch.isdigit())[-10:]
+                        cursor.execute(
+                            "SELECT RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) "
+                            "FROM customers WHERE id = %s",
+                            (customer_id,),
+                        )
+                        cust_row = cursor.fetchone()
+                        cust_digits_10 = cust_row[0] if cust_row else None
+                        if lookup_digits_10 and cust_digits_10 and lookup_digits_10 != cust_digits_10:
+                            return response(409, {
+                                "message": "Safety check failed: the phone on the form does not match the "
+                                           "customer on this order. Edit refused to prevent corrupting the "
+                                           "wrong customer's order. Reload the dashboard and try again."
+                            })
+                else:
+                    # ── Legacy fallback: no orderId. Manual phone entry to add
+                    # services to a customer's latest order. Preserves the
+                    # original Brooklyn Bikery workflow for that case.
+                    lookup_digits_10 = "".join(ch for ch in (lookup_phone or "") if ch.isdigit())[-10:]
+                    cursor.execute("SELECT id FROM customers WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (lookup_digits_10,))
+                    row = cursor.fetchone()
+                    if not row:
+                        return response(400, {"message": "Customer not found"})
+                    customer_id = row[0]
+
+                    # Get most recent order for this customer
+                    cursor.execute("SELECT id, date_of_service FROM orders WHERE customer_id = %s ORDER BY id DESC LIMIT 1", (customer_id,))
+                    row = cursor.fetchone()
+                    if not row:
+                        return response(400, {"message": "No existing order found for this customer."})
+                    order_id, order_date = row[0], row[1]
 
                 # Update customer info if provided (name/phone corrections)
                 update_fields, vals = [], []
@@ -582,8 +637,6 @@ def lambda_handler(event, context):
             # up tenant resolution from the request URL.
             # ────────────────────────────────────────────────────────────────
             try:
-                TENANT_ID = 1
-
                 cursor.execute(
                     "SELECT code, id FROM service_catalog WHERE tenant_id = %s",
                     (TENANT_ID,)

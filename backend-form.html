@@ -1034,6 +1034,11 @@ function logout() {
 async function loadLatestPhone() {
   const urlParams = new URLSearchParams(window.location.search);
 
+  // Capture the explicit order id (admin "Edit Services" deep-link). Sent on
+  // submit so the backend edits exactly THIS order — never "the latest order
+  // for whatever phone is in the box". This is the real wrong-order-bug fix.
+  editOrderId = urlParams.get('orderId') || null;
+
   // If URL has a phone param (e.g. coming from admin dashboard's "Edit
   // Services" button), switch to Edit Existing mode for that specific
   // customer. IMPORTANT: set the lookupPhone BEFORE calling setMode —
@@ -1067,8 +1072,16 @@ async function loadLatestPhone() {
 // click the toggle to switch to Edit mode (looking up an existing customer).
 // ============================================
 let isNewCustomerMode = true;
+// Set from the ?orderId= URL param (admin "Edit Services"). When present, the
+// submit payload carries it so the backend edits exactly this order.
+let editOrderId = null;
 
-function toggleMode() { setMode(!isNewCustomerMode); }
+function toggleMode() {
+  // User explicitly switched modes — drop any "edit this specific order" intent
+  // from the deep-link so a manual lookup uses the normal latest-order flow.
+  editOrderId = null;
+  setMode(!isNewCustomerMode);
+}
 
 function setMode(newCustomer) {
   isNewCustomerMode = newCustomer;
@@ -1139,6 +1152,7 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
     name: isNewCustomerMode ? document.getElementById('ncName').value.trim() : document.querySelector('input[name="name"]').value,
     phone: isNewCustomerMode ? document.getElementById('ncPhone').value.trim() : document.querySelector('input[name="phone"]').value,
     lookupPhone: isNewCustomerMode ? '' : document.querySelector('input[name="lookupPhone"]').value,
+    orderId: isNewCustomerMode ? null : editOrderId,
     isNewCustomer: isNewCustomerMode,
     bikeDescription: document.querySelector('input[name="bikeDescription"]').value.trim(),
     services: [],

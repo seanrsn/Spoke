@@ -164,7 +164,18 @@ jobs:
               customer-form.html) echo "Skipping retired $f"; continue ;;
               neonindex.html)     echo "Skipping legacy $f";  continue ;;
             esac
-            CACHE="public, max-age=300, must-revalidate"
+            # Admin tools must NEVER run stale JS. A cached old build of the admin
+            # form is a suspected vector for the wrong-order bug that corrupted a
+            # real customer's order: the browser kept running pre-fix code for up
+            # to 5 min after a deploy. Force revalidation on every load for the two
+            # admin pages so a shipped fix can't be silently bypassed by the cache.
+            # Public marketing pages keep the 5-min CDN cache (perf, no risk).
+            case "$f" in
+              admin-dashboard.html|backend-form.html)
+                CACHE="no-cache, must-revalidate" ;;
+              *)
+                CACHE="public, max-age=300, must-revalidate" ;;
+            esac
             aws s3 cp "$f" "s3://${S3_BUCKET}/$f" \
               --cache-control "$CACHE" \
               --region "$AWS_REGION"
