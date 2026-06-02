@@ -4192,6 +4192,9 @@ function openBackendForm(orderId) {
   if (!order) return showError('Order not found');
 
   const params = new URLSearchParams();
+  // orderId is authoritative — the backend edits THIS exact order, so a stale
+  // or mismatched phone can never redirect the edit onto another customer.
+  params.set('orderId', order.id);
   params.set('phone', order.customer_phone || '');
   params.set('bike', order.bike_description || '');
   params.set('notes', order.backend_notes || '');
