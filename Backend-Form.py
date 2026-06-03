@@ -62,7 +62,7 @@ def get_jwt_secret():
     """
     client = boto3.client("secretsmanager", region_name=REGION)
     try:
-        resp = client.get_secret_value(SecretId="bikery-jwt-secret")
+        resp = client.get_secret_value(SecretId=os.getenv("JWT_SECRET_ID", "bikery-jwt-secret"))
         secret_data = json.loads(resp["SecretString"])
         return secret_data.get("secret", "")
     except Exception as e:
@@ -144,7 +144,7 @@ def require_auth(event):
 def get_db_secret():
     """Retrieve database credentials from AWS Secrets Manager"""
     client = boto3.client("secretsmanager", region_name=REGION)
-    return json.loads(client.get_secret_value(SecretId="bikeshop-credentials")["SecretString"])
+    return json.loads(client.get_secret_value(SecretId=os.getenv("DB_SECRET_ID", "bikeshop-credentials"))["SecretString"])
 
 # ============================================
 # TENANT CONFIG (multi-tenancy migration, step 7)
@@ -347,7 +347,12 @@ def lambda_handler(event, context):
         return response(401, {"error": error})
     
     print(f"✅ Authenticated request")
-    
+
+    # Multi-tenancy step 8: tenant comes from the VERIFIED token (absent -> 1,
+    # so pre-step-8 tokens behave unchanged). Every customer/order/service query
+    # below is scoped by this tid so a shop can never touch another's rows.
+    tid = int(payload.get("tenant_id") or 1)
+
     # ============================================
     # GET request - Get latest phone number
     # Used by admin form to auto-populate phone field
@@ -366,12 +371,13 @@ def lambda_handler(event, context):
             
             # Get phone number of most recent order
             cursor.execute("""
-                SELECT c.phone 
+                SELECT c.phone
                 FROM orders o
-                JOIN customers c ON o.customer_id = c.id
+                JOIN customers c ON o.customer_id = c.id AND c.tenant_id = o.tenant_id
+                WHERE o.tenant_id = %s
                 ORDER BY o.id DESC
                 LIMIT 1
-            """)
+            """, (tid,))
             
             row = cursor.fetchone()
             cursor.close()
@@ -394,7 +400,7 @@ def lambda_handler(event, context):
         # Fail-fast: if tenant lookup breaks, the whole request fails — better
         # than silently using stale defaults that might charge wrong tax or
         # send SMS from the wrong shop's number.
-        tenant = get_tenant(1)
+        tenant = get_tenant(tid)
 
         body = json.loads(event.get("body", "{}"))
 
@@ -410,6 +416,11 @@ def lambda_handler(event, context):
         notes = (body.get("notes") or "").strip()
         custom_description = (body.get("customDescription") or "").strip()
         custom_price = float(body.get("customPrice", 0) or 0)
+        # Whether to text the customer their invoice. Default True so the normal
+        # "log a service -> invoice" flow is unchanged, and any older client that
+        # doesn't send the flag keeps texting. Unchecked on the form -> save the
+        # order silently (e.g. correcting a historical order without re-texting).
+        send_invoice = bool(body.get("sendInvoice", True))
 
         # Service pricing map with front/rear component separation
         # Format: "Display Label": ("database_column", price)
@@ -479,22 +490,22 @@ def lambda_handler(event, context):
                 # Find or create customer by last 10 digits of phone
                 # Handles mixed storage formats (10-digit vs E.164) across form types
                 digits_10 = new_phone[-10:]
-                cursor.execute("SELECT id FROM customers WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (digits_10,))
+                cursor.execute("SELECT id FROM customers WHERE tenant_id = %s AND RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (tid, digits_10))
                 row = cursor.fetchone()
                 if row:
                     customer_id = row[0]
                     # Existing customer — preserve their name, just create a new order
                 else:
                     cursor.execute(
-                        "INSERT INTO customers (name, phone, date_created) VALUES (%s, %s, %s)",
-                        (name, new_phone, today_str)
+                        "INSERT INTO customers (tenant_id, name, phone, date_created) VALUES (%s, %s, %s, %s)",
+                        (tid, name, new_phone, today_str)
                     )
                     customer_id = cursor.lastrowid
 
                 # Create a new order for this visit
                 cursor.execute(
-                    "INSERT INTO orders (customer_id, date_of_service) VALUES (%s, %s)",
-                    (customer_id, today_str)
+                    "INSERT INTO orders (tenant_id, customer_id, date_of_service) VALUES (%s, %s, %s)",
+                    (tid, customer_id, today_str)
                 )
                 order_id = cursor.lastrowid
                 order_date = today_str
@@ -520,7 +531,7 @@ def lambda_handler(event, context):
                     cursor.execute(
                         "SELECT id, date_of_service, customer_id FROM orders "
                         "WHERE id = %s AND tenant_id = %s",
-                        (oid, TENANT_ID),
+                        (oid, tid),
                     )
                     row = cursor.fetchone()
                     if not row:
@@ -535,8 +546,8 @@ def lambda_handler(event, context):
                         lookup_digits_10 = "".join(ch for ch in lookup_phone if ch.isdigit())[-10:]
                         cursor.execute(
                             "SELECT RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) "
-                            "FROM customers WHERE id = %s",
-                            (customer_id,),
+                            "FROM customers WHERE id = %s AND tenant_id = %s",
+                            (customer_id, tid),
                         )
                         cust_row = cursor.fetchone()
                         cust_digits_10 = cust_row[0] if cust_row else None
@@ -551,14 +562,14 @@ def lambda_handler(event, context):
                     # services to a customer's latest order. Preserves the
                     # original Brooklyn Bikery workflow for that case.
                     lookup_digits_10 = "".join(ch for ch in (lookup_phone or "") if ch.isdigit())[-10:]
-                    cursor.execute("SELECT id FROM customers WHERE RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (lookup_digits_10,))
+                    cursor.execute("SELECT id FROM customers WHERE tenant_id = %s AND RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) = %s", (tid, lookup_digits_10))
                     row = cursor.fetchone()
                     if not row:
                         return response(400, {"message": "Customer not found"})
                     customer_id = row[0]
 
                     # Get most recent order for this customer
-                    cursor.execute("SELECT id, date_of_service FROM orders WHERE customer_id = %s ORDER BY id DESC LIMIT 1", (customer_id,))
+                    cursor.execute("SELECT id, date_of_service FROM orders WHERE customer_id = %s AND tenant_id = %s ORDER BY id DESC LIMIT 1", (customer_id, tid))
                     row = cursor.fetchone()
                     if not row:
                         return response(400, {"message": "No existing order found for this customer."})
@@ -570,7 +581,8 @@ def lambda_handler(event, context):
                 if phone: update_fields.append("phone = %s"); vals.append(phone)
                 if update_fields:
                     vals.append(customer_id)
-                    cursor.execute(f"UPDATE customers SET {', '.join(update_fields)} WHERE id = %s", vals)
+                    vals.append(tid)
+                    cursor.execute(f"UPDATE customers SET {', '.join(update_fields)} WHERE id = %s AND tenant_id = %s", vals)
 
             # Build the order record updates.
             # ────────────────────────────────────────────────────────────────
@@ -617,10 +629,10 @@ def lambda_handler(event, context):
                     print(f"SECURITY: rejecting non-alphanumeric column name: {_col!r}")
                     return response(400, {"message": "Invalid request"})
 
-            # Update order record
+            # Update order record (tenant-scoped: can only touch this tenant's order)
             cursor.execute(
-                f"UPDATE orders SET {', '.join([f'{c} = %s' for c in order_updates.keys()])} WHERE id = %s",
-                list(order_updates.values()) + [order_id]
+                f"UPDATE orders SET {', '.join([f'{c} = %s' for c in order_updates.keys()])} WHERE id = %s AND tenant_id = %s",
+                list(order_updates.values()) + [order_id, tid]
             )
 
             # ────────────────────────────────────────────────────────────────
@@ -639,7 +651,7 @@ def lambda_handler(event, context):
             try:
                 cursor.execute(
                     "SELECT code, id FROM service_catalog WHERE tenant_id = %s",
-                    (TENANT_ID,)
+                    (tid,)
                 )
                 catalog_map = {code: cid for code, cid in cursor.fetchall()}
 
@@ -647,7 +659,7 @@ def lambda_handler(event, context):
                 # existing line items and re-insert based on current selection.
                 cursor.execute(
                     "DELETE FROM order_services WHERE tenant_id = %s AND order_id = %s",
-                    (TENANT_ID, order_id)
+                    (tid, order_id)
                 )
 
                 line_rows = []
@@ -657,27 +669,27 @@ def lambda_handler(event, context):
                     col, price = services_with_prices.get(label, (None, None))
                     if col and col in catalog_map and price is not None:
                         line_rows.append(
-                            (TENANT_ID, order_id, catalog_map[col], 1, price, None)
+                            (tid, order_id, catalog_map[col], 1, price, None)
                         )
 
                 # Spoke services (quantity-based; price = 33 + 2 * count)
                 if front_spokes > 0 and "front_fix_spoke" in catalog_map:
                     spoke_price = 33 + 2 * front_spokes
                     line_rows.append(
-                        (TENANT_ID, order_id, catalog_map["front_fix_spoke"],
+                        (tid, order_id, catalog_map["front_fix_spoke"],
                          front_spokes, spoke_price, None)
                     )
                 if rear_spokes > 0 and "rear_fix_spoke" in catalog_map:
                     spoke_price = 33 + 2 * rear_spokes
                     line_rows.append(
-                        (TENANT_ID, order_id, catalog_map["rear_fix_spoke"],
+                        (tid, order_id, catalog_map["rear_fix_spoke"],
                          rear_spokes, spoke_price, None)
                     )
 
                 # Custom service (ad-hoc; price + description set by admin)
                 if custom_description and custom_price > 0 and "custom_service" in catalog_map:
                     line_rows.append(
-                        (TENANT_ID, order_id, catalog_map["custom_service"],
+                        (tid, order_id, catalog_map["custom_service"],
                          1, custom_price, custom_description)
                     )
 
@@ -698,18 +710,18 @@ def lambda_handler(event, context):
                 print(f"⚠️ order_services write failed for order {order_id}: {os_write_err}")
 
             # Get updated customer info for SMS
-            cursor.execute("SELECT name, phone FROM customers WHERE id = %s", (customer_id,))
+            cursor.execute("SELECT name, phone FROM customers WHERE id = %s AND tenant_id = %s", (customer_id, tid))
             crow = cursor.fetchone()
             customer = {"name": crow[0], "phone": crow[1]}
 
-            cursor.execute("SELECT bike_description FROM orders WHERE id = %s", (order_id,))
+            cursor.execute("SELECT bike_description FROM orders WHERE id = %s AND tenant_id = %s", (order_id, tid))
             bike_row = cursor.fetchone()
             bike_desc = bike_row[0] if bike_row and bike_row[0] else ""
 
             # Build invoice text now while DB connection is open
             target_phone = normalize_us_phone(customer.get("phone") or "")
             invoice_text = None
-            if target_phone:
+            if target_phone and send_invoice:
                 date_str = str(order_date or datetime.now(ZoneInfo("America/New_York")).date())
                 invoice_text = build_invoice_text(
                     customer=customer,
@@ -748,6 +760,12 @@ def lambda_handler(event, context):
             cursor.close()
             conn.close()
 
+        if not send_invoice:
+            # Admin chose not to text the customer (e.g. fixing a past order).
+            # Order is saved; no invoice SMS is queued and no outbound message
+            # is recorded. message must be exactly "Success" for the UI overlay.
+            return response(200, {"message": "Success", "order_id": order_id, "sms": "skipped"})
+
         if not target_phone:
             return response(200, {"message": "Success (no SMS sent: invalid/missing customer phone)", "order_id": order_id})
 
@@ -760,7 +778,7 @@ def lambda_handler(event, context):
         # account_sid + from_number are not secrets (just identifiers), so
         # they go in the payload as plain values.
         s3_client = boto3.client('s3')
-        sms_bucket = 'brooklyn-bikery-sms'
+        sms_bucket = os.getenv("SMS_BUCKET", "brooklyn-bikery-sms")
         job_key = f"sms/invoice_{order_id}_{uuid.uuid4().hex[:8]}.json"
         s3_client.put_object(
             Bucket=sms_bucket,

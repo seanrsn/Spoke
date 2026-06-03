@@ -51,7 +51,7 @@ def get_secret():
             endpoint_url=SM_ENDPOINT if SM_ENDPOINT else None,
             config=BOTO_CFG
         )
-        out = client.get_secret_value(SecretId="bikeshop-credentials")
+        out = client.get_secret_value(SecretId=os.getenv("DB_SECRET_ID", "bikeshop-credentials"))
         return json.loads(out["SecretString"])
     except Exception as e:
         raise RuntimeError(f"Configuration error")

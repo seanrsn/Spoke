@@ -47,7 +47,7 @@ def response(status, body):
 def get_secret():
     """Retrieve database credentials from AWS Secrets Manager"""
     client = boto3.client("secretsmanager", region_name=REGION)
-    resp = client.get_secret_value(SecretId="bikeshop-credentials")
+    resp = client.get_secret_value(SecretId=os.getenv("DB_SECRET_ID", "bikeshop-credentials"))
     return json.loads(resp["SecretString"])
 
 # ============================================
@@ -96,14 +96,42 @@ def get_tenant(tenant_id: int = 1) -> dict:
     finally:
         conn.close()
 
-def get_admin_password():
+def resolve_tenant_id(payload=None, body=None):
+    """Tenant for this request (multi-tenancy step 8).
+
+    Prefer the verified JWT claim (set at login); else a login slug in the body;
+    else default to Brooklyn Bikery (tenant 1). The default keeps existing
+    single-tenant traffic and any pre-step-8 tokens behaving EXACTLY as before.
+    """
+    if payload and payload.get("tenant_id"):
+        try:
+            return int(payload["tenant_id"])
+        except (TypeError, ValueError):
+            return 1
+    slug = (body or {}).get("tenant") or (body or {}).get("shop")
+    if slug:
+        secret = get_secret()
+        conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                               password=secret["password"], database=secret["database"],
+                               connect_timeout=5, charset="utf8mb4")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM tenants WHERE slug = %s AND status = 'active'", (slug,))
+                row = cur.fetchone()
+                if row:
+                    return int(row[0])
+        finally:
+            conn.close()
+    return 1
+
+def get_admin_password(tenant_id: int = 1):
     """
     Retrieve admin password from AWS Secrets Manager. The secret ARN is now
     per-tenant (was hardcoded to 'bikery-admin-password' before step 7).
     Used for verifying login attempts.
     """
     try:
-        tenant = get_tenant(1)
+        tenant = get_tenant(tenant_id)
         client = boto3.client("secretsmanager", region_name=REGION)
         resp = client.get_secret_value(SecretId=tenant["admin_password_secret_arn"])
         secret_data = json.loads(resp["SecretString"])
@@ -122,7 +150,7 @@ def get_jwt_secret():
     overwrite, instantly invalidating live tokens).
     """
     client = boto3.client("secretsmanager", region_name=REGION)
-    secret_id = "bikery-jwt-secret"
+    secret_id = os.getenv("JWT_SECRET_ID", "bikery-jwt-secret")
     try:
         resp = client.get_secret_value(SecretId=secret_id)
         secret_data = json.loads(resp["SecretString"])
@@ -510,7 +538,7 @@ def record_login_attempt(ip_address, success):
 # `brooklyn-bikery-push-jobs` has BlockPublicAccess on at the bucket level.
 PUSH_BUCKET = os.getenv("PUSH_BUCKET", "brooklyn-bikery-push-jobs")
 
-def send_push_notifications(from_number, message_body, db_secret):
+def send_push_notifications(from_number, message_body, db_secret, tenant_id=1):
     """
     Send push notifications by writing a job file to S3 push/ folder.
     The Send-SMS Lambda (not in VPC) picks it up via S3 trigger and
@@ -531,15 +559,15 @@ def send_push_notifications(from_number, message_body, db_secret):
         connect_timeout=5,
     )
     cursor = conn.cursor()
-    cursor.execute("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+    cursor.execute("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE tenant_id = %s", (tenant_id,))
     subscriptions = cursor.fetchall()
 
     # Look up customer name by phone number (try both E.164 and 10-digit)
     digits = ''.join(c for c in from_number if c.isdigit())
     phone_10 = digits[-10:] if len(digits) >= 10 else digits
     cursor.execute(
-        "SELECT name FROM customers WHERE phone = %s OR phone = %s OR phone = %s LIMIT 1",
-        (from_number, phone_10, '+1' + phone_10)
+        "SELECT name FROM customers WHERE tenant_id = %s AND (phone = %s OR phone = %s OR phone = %s) LIMIT 1",
+        (tenant_id, from_number, phone_10, '+1' + phone_10)
     )
     name_row = cursor.fetchone()
     customer_name = name_row[0] if name_row and name_row[0] else None
@@ -669,8 +697,11 @@ def lambda_handler(event, context):
                 record_login_attempt(ip_address, False)
                 return response(400, {"error": "Password required"})
             
-            # Get correct password from Secrets Manager
-            correct_password = get_admin_password()
+            # Multi-tenancy step 8: which shop is logging in? A slug in the body
+            # (absent -> Brooklyn Bikery / tenant 1). Validate against THAT
+            # tenant's password and stamp the tenant into the JWT below.
+            login_tid = resolve_tenant_id(body=body)
+            correct_password = get_admin_password(login_tid)
             if not correct_password:
                 return response(500, {"error": "Authentication service unavailable"})
             
@@ -690,11 +721,19 @@ def lambda_handler(event, context):
             print(f"✅ Successful login from {ip_address}")
             
             jwt_secret = get_jwt_secret()
-            token = create_jwt({"role": "admin", "ip": ip_address}, jwt_secret)
-            
+            token = create_jwt({"role": "admin", "ip": ip_address, "tenant_id": login_tid}, jwt_secret)
+
+            # Shop name for the dashboard header so the user always knows which
+            # shop they're in (multi-tenant). Cached get_tenant — no extra round-trip.
+            try:
+                shop_name = get_tenant(login_tid).get("display_name", "")
+            except Exception:
+                shop_name = ""
+
             return response(200, {
                 "message": "Login successful",
                 "token": token,
+                "shop": shop_name,
                 "expires_in": TOKEN_EXPIRY_SECONDS
             })
             
@@ -804,7 +843,7 @@ def lambda_handler(event, context):
             # Send push notifications directly (Lambda timeout must be >= 30s)
             print(f"🔔 About to send push notifications...")
             try:
-                send_push_notifications(from_number, message_body, secret)
+                send_push_notifications(from_number, message_body, secret, tenant["id"])
                 print(f"🔔 Push notifications completed")
             except Exception as push_err:
                 print(f"⚠️ Push notification error (non-fatal): {push_err}")
@@ -834,8 +873,13 @@ def lambda_handler(event, context):
     if error:
         print(f"❌ Auth failed: {error}")
         return response(401, {"error": error})
-    
-    print(f"✅ Authenticated admin request")
+
+    # Multi-tenancy step 8: the tenant comes from the VERIFIED token (set at
+    # login). Every data query below is scoped by this `tid` so one shop can
+    # never see or touch another's rows. Pre-step-8 tokens lack the claim and
+    # resolve to 1 (Brooklyn Bikery) — unchanged behavior.
+    tid = resolve_tenant_id(payload=payload)
+    print(f"✅ Authenticated admin request (tenant {tid})")
     
     # ============================================
     # SEND SMS ENDPOINT
@@ -873,7 +917,7 @@ def lambda_handler(event, context):
 
             # Upload SMS/MMS job to S3 for processing
             s3_client = boto3.client('s3')
-            sms_bucket = 'brooklyn-bikery-sms'
+            sms_bucket = os.getenv("SMS_BUCKET", "brooklyn-bikery-sms")
 
             sms_job = {
                 "to": to_phone_normalized,
@@ -910,8 +954,8 @@ def lambda_handler(event, context):
 
                 # Read Twilio from-number straight from tenants table column
                 # (no Secrets Manager round-trip needed since it's now a
-                # dedicated DB column as of step 1).
-                tenant = get_tenant(1)
+                # dedicated DB column as of step 1). Tenant from the verified token.
+                tenant = get_tenant(tid)
                 from_number = tenant["twilio_from_number"]
 
                 cursor.execute("""
@@ -962,7 +1006,7 @@ def lambda_handler(event, context):
             # Generate unique key for the image
             from botocore.config import Config
             s3_client = boto3.client('s3', region_name=REGION, config=Config(signature_version='s3v4'))
-            mms_bucket = 'brooklyn-bikery-sms'  # Using same bucket, different prefix
+            mms_bucket = os.getenv("SMS_BUCKET", "brooklyn-bikery-sms")  # same bucket as SMS jobs, different prefix
             timestamp = datetime.now(ZoneInfo("America/New_York")).strftime("%Y%m%d_%H%M%S")
             safe_filename = "".join(c for c in file_name if c.isalnum() or c in '._-')[:50]
             image_key = f"mms-images/{timestamp}_{uuid.uuid4().hex[:8]}_{safe_filename}"
@@ -1026,17 +1070,17 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            # Customers
-            cursor.execute("SELECT * FROM customers ORDER BY id DESC")
+            # Customers (tenant-scoped)
+            cursor.execute("SELECT * FROM customers WHERE tenant_id = %s ORDER BY id DESC", (tid,))
             cust_cols = [desc[0] for desc in cursor.description]
             customers = [dict(zip(cust_cols, row)) for row in cursor.fetchall()]
             for r in customers:
                 if r.get('date_created'):
                     r['date_created'] = str(r['date_created'])
 
-            # Orders
+            # Orders (tenant-scoped)
             from decimal import Decimal
-            cursor.execute("SELECT * FROM orders ORDER BY id ASC")
+            cursor.execute("SELECT * FROM orders WHERE tenant_id = %s ORDER BY id ASC", (tid,))
             ord_cols = [desc[0] for desc in cursor.description]
             orders = []
             for row in cursor.fetchall():
@@ -1115,20 +1159,20 @@ def lambda_handler(event, context):
                     SELECT id, phone, direction, body, status, twilio_sid,
                            from_number, to_number, created_at
                     FROM messages
-                    WHERE (phone = %s OR phone = %s) AND id < %s
+                    WHERE tenant_id = %s AND (phone = %s OR phone = %s) AND id < %s
                     ORDER BY id DESC
                     LIMIT %s
-                """, (phone, phone_normalized, int(before_id), fetch_limit))
+                """, (tid, phone, phone_normalized, int(before_id), fetch_limit))
             else:
                 # Initial load: most recent messages
                 cursor.execute("""
                     SELECT id, phone, direction, body, status, twilio_sid,
                            from_number, to_number, created_at
                     FROM messages
-                    WHERE phone = %s OR phone = %s
+                    WHERE tenant_id = %s AND (phone = %s OR phone = %s)
                     ORDER BY id DESC
                     LIMIT %s
-                """, (phone, phone_normalized, fetch_limit))
+                """, (tid, phone, phone_normalized, fetch_limit))
 
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
@@ -1192,15 +1236,17 @@ def lambda_handler(event, context):
                     c.name as customer_name,
                     COUNT(*) as message_count,
                     MAX(m.created_at) as last_message_at,
-                    (SELECT body FROM messages m2 WHERE m2.phone = m.phone ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) as last_message,
-                    (SELECT direction FROM messages m2 WHERE m2.phone = m.phone ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) as last_message_direction
+                    (SELECT body FROM messages m2 WHERE m2.phone = m.phone AND m2.tenant_id = %s ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) as last_message,
+                    (SELECT direction FROM messages m2 WHERE m2.phone = m.phone AND m2.tenant_id = %s ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) as last_message_direction
                 FROM messages m
                 LEFT JOIN customers c ON
                     RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10) =
                     RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(m.phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), 10)
+                    AND c.tenant_id = %s
+                WHERE m.tenant_id = %s
                 GROUP BY m.phone, c.name
                 ORDER BY last_message_at DESC
-            """)
+            """, (tid, tid, tid, tid))
 
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
@@ -1271,16 +1317,18 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            # Upsert subscription (insert or update if endpoint exists)
+            # Upsert subscription (insert or update if endpoint exists).
+            # tenant-scoped: a device's subscription belongs to the logged-in shop.
             cursor.execute("""
-                INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO push_subscriptions (tenant_id, endpoint, p256dh, auth, user_agent)
+                VALUES (%s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
+                    tenant_id = VALUES(tenant_id),
                     p256dh = VALUES(p256dh),
                     auth = VALUES(auth),
                     user_agent = VALUES(user_agent),
                     created_at = CURRENT_TIMESTAMP
-            """, (endpoint, p256dh, auth, user_agent))
+            """, (tid, endpoint, p256dh, auth, user_agent))
 
             conn.commit()
             cursor.close()
@@ -1359,8 +1407,8 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            # Simple query — just what the mass SMS UI needs
-            cursor.execute("SELECT id, name, phone FROM customers ORDER BY id DESC")
+            # Simple query — just what the mass SMS UI needs (tenant-scoped)
+            cursor.execute("SELECT id, name, phone FROM customers WHERE tenant_id = %s ORDER BY id DESC", (tid,))
             rows = cursor.fetchall()
 
             customers = [{"id": r[0], "name": r[1], "phone": r[2]} for r in rows]
@@ -1421,11 +1469,11 @@ def lambda_handler(event, context):
             o.price,
             o.final_price
         FROM orders o
-        JOIN customers c ON o.customer_id = c.id
-        WHERE 1=1
+        JOIN customers c ON o.customer_id = c.id AND c.tenant_id = o.tenant_id
+        WHERE 1=1 AND o.tenant_id = %s
         """
 
-        params = []
+        params = [tid]
         
         # Build dynamic WHERE clause based on provided filters
         if start_date:
@@ -1479,7 +1527,7 @@ def lambda_handler(event, context):
         if orders:
             try:
                 order_ids = [o['id'] for o in orders]
-                service_data = synthesize_order_services(cursor, 1, order_ids)
+                service_data = synthesize_order_services(cursor, tid, order_ids)
                 for o in orders:
                     o.update(service_data.get(o['id'], {}))
             except Exception as synth_err:

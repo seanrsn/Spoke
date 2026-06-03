@@ -163,6 +163,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0.75rem 1rem;
+      position: relative; /* anchor the absolutely-centered shop name */
     }
 
     .form-switcher {
@@ -3284,6 +3285,7 @@
       <a href="backend-form.html"><i data-lucide="wrench"></i> <span>Service Entry</span></a>
       <a href="admin-dashboard.html" class="active"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a>
     </div>
+    <div class="shop-name" id="shopName" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-weight:800; font-size:1.1rem; color:#FCD34D; letter-spacing:0.03em; white-space:nowrap; pointer-events:none; text-shadow:0 1px 2px rgba(0,0,0,0.15);"></div>
     <div class="header-right-btns">
       <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()" title="Notifications"><i data-lucide="bell"></i></button>
       <button class="logout-btn" onclick="logout()"><i data-lucide="log-out"></i> <span>Logout</span></button>
@@ -3565,9 +3567,13 @@ const API_BASE = 'https://rqshavktfa.execute-api.us-east-1.amazonaws.com/stage';
 // ============================================
 // TOKEN MANAGEMENT
 // ============================================
-function getToken() { return sessionStorage.getItem('bikeryToken'); }
-function setToken(token) { sessionStorage.setItem('bikeryToken', token); }
-function clearToken() { sessionStorage.removeItem('bikeryToken'); }
+// Token in localStorage (shared across all tabs/pages of this origin) so the
+// Dashboard and Service Entry are ALWAYS the same shop — you can't be logged into
+// two shops at once. (Was sessionStorage, which kept a separate login per page and
+// let the form act as a different shop than the dashboard -> wrong-shop 404s.)
+function getToken() { return localStorage.getItem('bikeryToken'); }
+function setToken(token) { localStorage.setItem('bikeryToken', token); }
+function clearToken() { localStorage.removeItem('bikeryToken'); localStorage.removeItem('bikeryShop'); }
 
 function isLoggedIn() {
   const token = getToken();
@@ -3604,22 +3610,28 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const password = document.getElementById('passwordInput').value;
   const errorMsg = document.getElementById('errorMessage');
   const submitBtn = this.querySelector('button[type="submit"]');
-  
+
+  // Multi-tenancy: an optional ?tenant=<slug> in the URL picks which shop to
+  // log into. Absent -> the backend defaults to Brooklyn Bikery (tenant 1), so
+  // the normal login is unchanged. (Forward-compatible with a central login site.)
+  const tenantSlug = new URLSearchParams(window.location.search).get('tenant');
+
   submitBtn.disabled = true;
   submitBtn.textContent = 'Logging in...';
   errorMsg.classList.remove('show');
-  
+
   try {
     const response = await fetch(`${API_BASE}/AdminDashboard`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', password })
+      body: JSON.stringify({ action: 'login', password, ...(tenantSlug ? { tenant: tenantSlug } : {}) })
     });
     
     const data = await response.json();
     
     if (response.ok && data.token) {
       setToken(data.token);
+      if (data.shop) localStorage.setItem('bikeryShop', data.shop);
       showMainApp();
     } else {
       errorMsg.textContent = data.error || 'Invalid password. Please try again.';
@@ -3647,6 +3659,9 @@ function showLoginScreen() {
 function showMainApp() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('mainApp').classList.add('active');
+
+  const _shopEl = document.getElementById('shopName');
+  if (_shopEl) _shopEl.textContent = localStorage.getItem('bikeryShop') || '';
 
   // Keep Lambda warm while logged in + preload all data
   startWarmupPing();
@@ -4088,10 +4103,10 @@ function displayResults(orders) {
                 <span class="label total">Total:</span><span class="amount total">$${(order.final_price || 0).toFixed(2)}</span>
               </div>
             </div>
-            ${order._isNewest ? `<div class="action-buttons">
+            <div class="action-buttons">
               <button class="edit-btn" onclick="event.stopPropagation(); openBackendForm(${order.id})"><i data-lucide="pencil"></i> Edit Services</button>
               <button class="sms-btn" onclick="event.stopPropagation(); viewCustomerMessages('${order.customer_phone || ''}', '${(order.customer_name || '').replace(/'/g, "\\'")}')"><i data-lucide="message-circle"></i> Messages</button>
-            </div>` : ''}
+            </div>
           </div>
         </div>
       </div>`;
@@ -4209,7 +4224,11 @@ function openBackendForm(orderId) {
     params.set('customPrice', order.custom_service_price || 0);
   }
   
-  window.open(`https://brooklynbikery.com/backend-form.html?${params.toString()}`, '_blank');
+  // Relative URL — stays on the CURRENT origin (staging->staging, prod->prod).
+  // Was hardcoded to https://brooklynbikery.com, which on staging cross-navigated
+  // to PROD's backend-form: different origin (forced re-login, no shared session)
+  // and it looked up the order on prod (-> "Order N not found").
+  window.open(`/backend-form.html?${params.toString()}`, '_blank');
 }
 
 async function exportResults() {
