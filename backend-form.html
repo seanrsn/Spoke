@@ -139,6 +139,7 @@
       justify-content: space-between;
       padding: 0.75rem 1rem;
       margin: -2rem -1rem 1.5rem -1rem;
+      position: relative; /* anchor the absolutely-centered shop name */
     }
 
     .form-switcher {
@@ -726,6 +727,7 @@
       <a href="backend-form.html" class="active"><span class="icon"><i data-lucide="wrench"></i></span> Service Entry</a>
       <a href="admin-dashboard.html"><span class="icon"><i data-lucide="layout-dashboard"></i></span> Dashboard</a>
     </div>
+    <div class="shop-name" id="shopName" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-weight:800; font-size:1.1rem; color:#FCD34D; letter-spacing:0.03em; white-space:nowrap; pointer-events:none; text-shadow:0 1px 2px rgba(0,0,0,0.15);"></div>
     <button class="logout-btn" onclick="logout()"><i data-lucide="log-out"></i> Logout</button>
   </div>
 
@@ -921,7 +923,11 @@
     </div>
 
     <div class="submit-wrapper">
-      <button type="submit">Submit Service</button>
+      <label style="display:inline-flex; align-items:center; gap:0.55rem; margin-bottom:1.25rem; font-size:1rem; font-weight:600; color:#fff; cursor:pointer; user-select:none; text-shadow:0 1px 2px rgba(0,0,0,0.2);">
+        <input type="checkbox" id="sendInvoice" checked style="width:19px; height:19px; accent-color:#22c55e; cursor:pointer;">
+        Text the customer their invoice
+      </label>
+      <div><button type="submit">Submit Service</button></div>
     </div>
   </form>
 </div>
@@ -936,9 +942,13 @@ const API_SERVICES = 'https://rysf6hggs6.execute-api.us-east-1.amazonaws.com/sta
 // ============================================
 // TOKEN MANAGEMENT
 // ============================================
-function getToken() { return sessionStorage.getItem('bikeryToken'); }
-function setToken(token) { sessionStorage.setItem('bikeryToken', token); }
-function clearToken() { sessionStorage.removeItem('bikeryToken'); }
+// Token in localStorage (shared across all tabs/pages of this origin) so Service
+// Entry and the Dashboard are ALWAYS the same shop — you can't be logged into two
+// shops at once. (Was sessionStorage, which kept a separate login per page and let
+// this form act as a different shop than the dashboard -> wrong-shop 404s.)
+function getToken() { return localStorage.getItem('bikeryToken'); }
+function setToken(token) { localStorage.setItem('bikeryToken', token); }
+function clearToken() { localStorage.removeItem('bikeryToken'); localStorage.removeItem('bikeryShop'); }
 
 function isLoggedIn() {
   const token = getToken();
@@ -975,22 +985,27 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const password = document.getElementById('passwordInput').value;
   const errorMsg = document.getElementById('errorMessage');
   const submitBtn = this.querySelector('button[type="submit"]');
-  
+
+  // Multi-tenancy: optional ?tenant=<slug> in the URL selects the shop to log
+  // into. Absent -> backend defaults to Brooklyn Bikery (tenant 1), unchanged.
+  const tenantSlug = new URLSearchParams(window.location.search).get('tenant');
+
   submitBtn.disabled = true;
   submitBtn.textContent = 'Logging in...';
   errorMsg.classList.remove('show');
-  
+
   try {
     const response = await fetch(API_ADMIN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', password })
+      body: JSON.stringify({ action: 'login', password, ...(tenantSlug ? { tenant: tenantSlug } : {}) })
     });
     
     const data = await response.json();
     
     if (response.ok && data.token) {
       setToken(data.token);
+      if (data.shop) localStorage.setItem('bikeryShop', data.shop);
       showMainApp();
     } else {
       errorMsg.textContent = data.error || 'Invalid password. Please try again.';
@@ -1018,6 +1033,8 @@ function showLoginScreen() {
 function showMainApp() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('mainApp').classList.add('active');
+  const _shopEl = document.getElementById('shopName');
+  if (_shopEl) _shopEl.textContent = localStorage.getItem('bikeryShop') || '';
   setMode(true);
   loadLatestPhone();
 }
@@ -1106,10 +1123,24 @@ function setMode(newCustomer) {
 }
 
 async function reloadLatestPhone() {
+  // WRONG-ORDER GUARD. reloadLatestPhone fills the field with the *latest*
+  // customer's phone for convenience on a fresh manual lookup. But it is async,
+  // so it could resolve AFTER an "Edit Services" deep-link has already filled the
+  // field/orderId — overwriting the intended customer with the newest one (the
+  // resurfaced wrong-order bug: form showed +1500555000X for the wrong rider).
+  // Never touch the field when we're editing a specific order, and re-check both
+  // BEFORE and AFTER the await so a slow fetch can't clobber a deep-link.
+  const isDeepLink = () => {
+    const q = new URLSearchParams(window.location.search);
+    return !!(editOrderId || q.get('phone') || q.get('orderId'));
+  };
+  if (isDeepLink() || document.getElementById('lookupPhone').value.trim()) return;
   try {
     const res = await authFetch(API_SERVICES);
     const result = await res.json();
-    if (result.phone) document.getElementById('lookupPhone').value = result.phone;
+    if (!isDeepLink() && !document.getElementById('lookupPhone').value.trim() && result.phone) {
+      document.getElementById('lookupPhone').value = result.phone;
+    }
   } catch (e) { console.error('Failed to reload phone:', e); }
 }
 
@@ -1154,6 +1185,7 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
     lookupPhone: isNewCustomerMode ? '' : document.querySelector('input[name="lookupPhone"]').value,
     orderId: isNewCustomerMode ? null : editOrderId,
     isNewCustomer: isNewCustomerMode,
+    sendInvoice: document.getElementById('sendInvoice')?.checked ?? true,
     bikeDescription: document.querySelector('input[name="bikeDescription"]').value.trim(),
     services: [],
     frontSpokes: 0,
@@ -1202,11 +1234,14 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
       if (isNewCustomerMode) {
         setMode(false); // exit new customer mode and reload latest phone
       } else {
-        try {
-          const phoneRes = await authFetch(API_SERVICES);
-          const phoneResult = await phoneRes.json();
-          if (phoneResult.phone) document.getElementById('lookupPhone').value = phoneResult.phone;
-        } catch {}
+        // WRONG-ORDER FIX: after editing a SPECIFIC order, return to a clean
+        // New Order slate. The old code fetched the *latest* customer's phone
+        // and left the just-edited order's editOrderId in place — so the form
+        // appeared to switch to a different customer ("editing the wrong
+        // order"), and a re-submit could target the wrong order. Clear the edit
+        // context so the next action starts fresh.
+        editOrderId = null;
+        setMode(true);
       }
     } else {
       showError(result.message || result.error || "Unknown error.");

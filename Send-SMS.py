@@ -30,6 +30,17 @@ TWILIO_MESSAGING_SERVICE_SID = os.environ.get("TWILIO_MESSAGING_SERVICE_SID")  #
 FAILED_PREFIX = os.environ.get("FAILED_PREFIX", "failed/")  # Folder for failed jobs (set to "" to disable)
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
+# Deployment stage. In "staging" the function is hard-blocked from sending live
+# SMS regardless of which Twilio creds are present (belt-and-suspenders alongside
+# Twilio test credentials). Prod leaves this unset -> "prod" -> normal behavior.
+STAGE = os.environ.get("STAGE", "prod")
+# Twilio TEST Account SIDs are a fixed magic value; live SIDs differ. When the
+# real staging test SID is wired in (see staging plan Phase 6), this allowlist
+# lets only that test account through while STAGE=staging.
+STAGING_ALLOWED_TWILIO_SIDS = set(
+    s.strip() for s in os.environ.get("STAGING_ALLOWED_TWILIO_SIDS", "").split(",") if s.strip()
+)
+
 # ============================================
 # AWS CLIENTS
 # ============================================
@@ -114,6 +125,17 @@ def send_sms(to: str, body: str, media_url: str | None = None, *, job: dict | No
         raise ValueError("'to' and 'body' are required")
 
     account_sid, auth_token, from_num = _resolve_twilio_creds(job or {})
+
+    # ── STAGING HARD GUARD ────────────────────────────────────────────────────
+    # In staging, refuse to hand anything to the live Twilio API unless the
+    # resolved account is on the explicit test-SID allowlist. This is independent
+    # of (and in addition to) using Twilio test credentials: even a misconfigured
+    # staging job carrying a LIVE account SID is blocked here, so a staging
+    # message can never reach a real handset.
+    if STAGE == "staging" and account_sid not in STAGING_ALLOWED_TWILIO_SIDS:
+        print(f"BLOCKED: STAGE=staging refusing send for non-allowlisted Twilio "
+              f"account (sid prefix {str(account_sid)[:8]}). to={to}")
+        return {"ok": False, "blocked": True, "reason": "staging_guard", "to": to}
 
     # Must have either messaging service SID or from number
     if not (TWILIO_MESSAGING_SERVICE_SID or from_num):

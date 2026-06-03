@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'claude/**'
+      - staging
   pull_request:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
@@ -23,28 +24,47 @@ jobs:
       pull-requests: write
     outputs:
       should_deploy: ${{ steps.decide.outputs.should_deploy }}
+      target: ${{ steps.decide.outputs.target }}
+      ref: ${{ steps.decide.outputs.ref }}
     steps:
       - name: Decide what to do
         id: decide
         run: |
           # should_deploy must be set ONLY when we actually want to deploy.
-          # Previously emitted unconditionally — meant any PR open/sync from a
-          # non-claude branch would still trigger Lambda + S3 redeploy of main.
-          if [[ "${{ github.event_name }}" == "pull_request" && "${{ startsWith(github.head_ref, 'claude/') }}" == "true" ]]; then
+          # target = prod|staging selects which stack the deploy jobs hit.
+          # ref    = which git ref the deploy jobs check out and ship.
+          # A push to the `staging` branch deploys the -staging stack and is
+          # NEVER auto-merged into main (staging is a deliberate first stop).
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "mode=staging_deploy" >> $GITHUB_OUTPUT
+            echo "should_deploy=true"  >> $GITHUB_OUTPUT
+            echo "target=staging"      >> $GITHUB_OUTPUT
+            echo "ref=staging"         >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ startsWith(github.head_ref, 'claude/') }}" == "true" ]]; then
             echo "mode=merge_pr"      >> $GITHUB_OUTPUT
             echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "target=prod"        >> $GITHUB_OUTPUT
+            echo "ref=main"           >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/heads/claude/') }}" == "true" ]]; then
             echo "mode=merge_branch"  >> $GITHUB_OUTPUT
             echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "target=prod"        >> $GITHUB_OUTPUT
+            echo "ref=main"           >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "mode=passthrough"   >> $GITHUB_OUTPUT
             echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "target=prod"        >> $GITHUB_OUTPUT
+            echo "ref=main"           >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "mode=passthrough"   >> $GITHUB_OUTPUT
             echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "target=prod"        >> $GITHUB_OUTPUT
+            echo "ref=main"           >> $GITHUB_OUTPUT
           else
             echo "mode=skip"           >> $GITHUB_OUTPUT
             echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "target=prod"         >> $GITHUB_OUTPUT
+            echo "ref=main"            >> $GITHUB_OUTPUT
           fi
 
       - uses: actions/checkout@v4
@@ -76,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.prepare.outputs.ref }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -91,8 +111,18 @@ jobs:
           python-version: '3.12'
 
       - name: Package and deploy each Lambda
+        env:
+          TARGET: ${{ needs.prepare.outputs.target }}
         run: |
           set -e
+
+          # Staging deploys to the same functions suffixed with -staging.
+          # Their env vars (DB_SECRET_ID, STAGE, etc.) were set at create time
+          # and are preserved across update-function-code, so code-only updates
+          # keep staging pointed at the staging stack.
+          SUFFIX=""
+          if [ "$TARGET" = "staging" ]; then SUFFIX="-staging"; fi
+          echo "Deploy target: ${TARGET:-prod} (function suffix='${SUFFIX}')"
 
           declare -A FUNCTIONS=(
             ["Admin-Dashboard.py"]="AdminDashboard:1"
@@ -103,8 +133,9 @@ jobs:
 
           for SRC in "${!FUNCTIONS[@]}"; do
             IFS=':' read -r FN_NAME NEEDS_PYMYSQL <<< "${FUNCTIONS[$SRC]}"
+            TARGET_FN="${FN_NAME}${SUFFIX}"
             echo ""
-            echo "📦 Packaging $SRC -> $FN_NAME"
+            echo "📦 Packaging $SRC -> $TARGET_FN"
 
             BUILD_DIR=$(mktemp -d)
             cp "$SRC" "$BUILD_DIR/lambda_function.py"
@@ -113,12 +144,12 @@ jobs:
               pip install pymysql==1.1.1 -t "$BUILD_DIR" --quiet
             fi
 
-            ZIP="/tmp/${FN_NAME}.zip"
+            ZIP="/tmp/${TARGET_FN}.zip"
             (cd "$BUILD_DIR" && zip -rq "$ZIP" . -x "*.pyc" "__pycache__/*" "*.dist-info/*")
 
-            echo "   Deploying to $FN_NAME ($(du -h "$ZIP" | cut -f1))"
+            echo "   Deploying to $TARGET_FN ($(du -h "$ZIP" | cut -f1))"
             aws lambda update-function-code \
-              --function-name "$FN_NAME" \
+              --function-name "$TARGET_FN" \
               --zip-file "fileb://$ZIP" \
               --region "$AWS_REGION" \
               --output text \
@@ -135,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.prepare.outputs.ref }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -143,6 +174,23 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve deploy target (prod vs staging)
+        env:
+          TARGET: ${{ needs.prepare.outputs.target }}
+        run: |
+          # Staging ships to its own bucket + CloudFront and rewrites the prod
+          # API Gateway IDs to the staging ones so the staging site calls the
+          # staging APIs. Prod uses the workflow-level env defaults unchanged.
+          if [ "$TARGET" = "staging" ]; then
+            echo "DEPLOY_BUCKET=bikery-staging-site"  >> $GITHUB_ENV
+            echo "DEPLOY_CF_ID=E28UATBUDSN4QU"        >> $GITHUB_ENV
+            echo "REWRITE_API=1"                      >> $GITHUB_ENV
+          else
+            echo "DEPLOY_BUCKET=${S3_BUCKET}"         >> $GITHUB_ENV
+            echo "DEPLOY_CF_ID=${CLOUDFRONT_ID}"      >> $GITHUB_ENV
+            echo "REWRITE_API=0"                      >> $GITHUB_ENV
+          fi
 
       - name: Set up Node (for Tailwind build)
         uses: actions/setup-node@v4
@@ -176,15 +224,29 @@ jobs:
               *)
                 CACHE="public, max-age=300, must-revalidate" ;;
             esac
-            aws s3 cp "$f" "s3://${S3_BUCKET}/$f" \
-              --cache-control "$CACHE" \
-              --region "$AWS_REGION"
+            if [ "$REWRITE_API" = "1" ]; then
+              # Staging: rewrite prod API Gateway IDs -> staging IDs into a temp
+              # file. The temp has no extension, so set content-type explicitly.
+              TMP="$(mktemp)"
+              sed -e 's/rqshavktfa/dm63xxwajj/g' \
+                  -e 's/rysf6hggs6/dvo3bho9mj/g' \
+                  -e 's/pp7s8cgqke/0nevdp3exi/g' "$f" > "$TMP"
+              CT="$(case "$f" in *.html) echo text/html;; *.css) echo text/css;; *.js) echo application/javascript;; *.json) echo application/json;; *) echo application/octet-stream;; esac)"
+              aws s3 cp "$TMP" "s3://${DEPLOY_BUCKET}/$f" \
+                --content-type "$CT" --cache-control "$CACHE" --region "$AWS_REGION"
+              rm -f "$TMP"
+            else
+              # Prod: ship the file as-is (aws s3 cp auto-detects content-type) —
+              # byte-identical to the original behavior.
+              aws s3 cp "$f" "s3://${DEPLOY_BUCKET}/$f" \
+                --cache-control "$CACHE" --region "$AWS_REGION"
+            fi
           done
 
       - name: Sync sitemap + robots
         run: |
           for f in sitemap.xml robots.txt; do
-            [ -f "$f" ] && aws s3 cp "$f" "s3://${S3_BUCKET}/$f" \
+            [ -f "$f" ] && aws s3 cp "$f" "s3://${DEPLOY_BUCKET}/$f" \
               --cache-control "public, max-age=3600" \
               --region "$AWS_REGION"
           done
@@ -192,7 +254,38 @@ jobs:
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id "$CLOUDFRONT_ID" \
+            --distribution-id "$DEPLOY_CF_ID" \
             --paths "/*" \
             --query 'Invalidation.Id' \
             --output text
+
+  staging-tests:
+    name: Run staging integration tests (staging only)
+    needs: [prepare, deploy-lambdas, deploy-frontend]
+    # Only after a STAGING deploy. Never runs for prod. A failure here is your
+    # signal NOT to promote the change to main. The centerpiece is the
+    # wrong-order regression test that guards the order-corruption bug class.
+    if: needs.prepare.outputs.target == 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test deps
+        run: pip install boto3 pymysql==1.1.1 --quiet
+
+      - name: Run staging integration tests
+        run: python tests/staging_integration.py
