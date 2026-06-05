@@ -166,6 +166,21 @@
       position: relative; /* anchor the absolutely-centered shop name */
     }
 
+    /* Mobile: the absolutely-centered shop name overlaps the switcher + Logout on
+       narrow screens. Reflow it onto its own centered row beneath them. */
+    @media (max-width: 600px) {
+      .top-header { flex-wrap: wrap; row-gap: 0.4rem; }
+      #shopName {
+        position: static !important;
+        transform: none !important;
+        order: 3;
+        flex-basis: 100%;
+        max-width: 100%;
+        text-align: center;
+        font-size: 1rem !important;
+      }
+    }
+
     .form-switcher {
       display: flex;
       background: #ffffff;
@@ -2830,9 +2845,24 @@
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: translateY(0); }
     }
-    /* Mobile fixed-position takeover panels: skip the transform-fade animation
-       so the fixed positioning isn't disturbed. The bottom bar's own slide
-       transition already provides the perceived motion. */
+    /* Fixed-position takeover panels (Customers, Messages) contain a position:fixed
+       child (#custFullscreen / the messages overlay). They must NEVER hold a transform:
+       any transform — even the identity translateY(0) that tabPanelFade leaves behind via
+       fill-mode:both — turns the panel into the containing block for its fixed child, so
+       the child's height:100% resolves against the panel's collapsed 0 height and the list
+       renders into a zero-height box. (This is why the Customers tab was blank on desktop.)
+       Fade opacity only — no transform — at every width. Orders keeps the slide+fade above. */
+    #tab-customers.active,
+    #tab-messages.active {
+      animation: tabPanelFadeOpacity 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+      transform: none;
+    }
+    @keyframes tabPanelFadeOpacity {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    /* Mobile: these panels are full-screen takeovers; skip even the opacity fade so the
+       fixed positioning settles instantly under the floating bottom tab bar. */
     @media (max-width: 700px) {
       #tab-customers.active,
       #tab-messages.active {
