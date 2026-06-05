@@ -142,6 +142,21 @@
       position: relative; /* anchor the absolutely-centered shop name */
     }
 
+    /* Mobile: the absolutely-centered shop name overlaps the switcher + Logout on
+       narrow screens. Reflow it onto its own centered row beneath them. */
+    @media (max-width: 600px) {
+      .top-header { flex-wrap: wrap; row-gap: 0.4rem; }
+      #shopName {
+        position: static !important;
+        transform: none !important;
+        order: 3;
+        flex-basis: 100%;
+        max-width: 100%;
+        text-align: center;
+        font-size: 1rem !important;
+      }
+    }
+
     .form-switcher {
       display: flex;
       background: rgba(255, 255, 255, 0.15);
@@ -737,7 +752,7 @@
         <span class="checkmark"><i data-lucide="check"></i></span>
       </div>
       <h3>Successfully Submitted!</h3>
-      <p>Service entry saved and customer notified.<br><br><strong>Brooklyn Bikery</strong><br>Ride with confidence, and a smile!</p>
+      <p><span id="successLine">Service entry saved.</span><br><br><strong id="successShop"></strong></p>
     </div>
   </div>
 
@@ -1227,6 +1242,19 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
 
     const result = await res.json().catch(() => ({}));
     if (res.ok && result.message === "Success") {
+      // Conditional success copy: the backend reports whether it actually queued
+      // the invoice text (`sms: "queued"`) or intentionally skipped it
+      // (`sms: "skipped"`, i.e. the "Text the customer" box was unchecked). Only
+      // claim the customer was notified when a text really went out. The shop name
+      // is taken from the logged-in tenant (textContent = no HTML injection),
+      // replacing the old hardcoded "Brooklyn Bikery".
+      const _notified = result.sms === 'queued';
+      const _line = document.getElementById('successLine');
+      const _shop = document.getElementById('successShop');
+      if (_line) _line.textContent = _notified
+        ? 'Service entry saved — the customer was texted their invoice.'
+        : 'Service entry saved. The customer was not texted.';
+      if (_shop) _shop.textContent = (localStorage.getItem('bikeryShop') || '').trim();
       successOverlay.classList.add('show');
       e.target.reset();
       setTimeout(() => successOverlay.classList.remove('show'), 4000);
