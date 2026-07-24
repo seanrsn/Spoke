@@ -31,16 +31,68 @@ ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://brooklynbikery.com")
 # earlier references with UnboundLocalError).
 TENANT_ID = 1
 
-# CORS headers for cross-origin requests from admin dashboard
-CORS = {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
-}
+# ── Multi-origin CORS ────────────────────────────────────────────────────────
+# Each tenant can serve its admin pages from its own origin (future
+# {shop}.bluewrenchhq.com). The allow-list is: the env-var origin (prod or
+# staging default) + every active tenant's `allowed_origin`. The request's
+# Origin header is reflected back ONLY if it's in that list; anything else
+# gets the env default (which the browser then correctly blocks).
+_ORIGIN_CACHE = {"origins": None, "loaded_at": 0.0}
+_ORIGIN_TTL_SECONDS = 300
+
+# Per-invocation resolved origin. Lambda handles one request per container at
+# a time, so a module global is safe here.
+_REQUEST_ORIGIN = ALLOWED_ORIGIN
+
+
+def _allowed_origins():
+    """Set of origins allowed to call this API (env default + per-tenant)."""
+    now = time.time()
+    if _ORIGIN_CACHE["origins"] is not None and now - _ORIGIN_CACHE["loaded_at"] < _ORIGIN_TTL_SECONDS:
+        return _ORIGIN_CACHE["origins"]
+    origins = {ALLOWED_ORIGIN}
+    try:
+        secret = get_db_secret()
+        conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                               password=secret["password"], database=secret["database"],
+                               connect_timeout=3)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT allowed_origin FROM tenants WHERE status='active' AND allowed_origin IS NOT NULL AND allowed_origin != ''")
+                for (o,) in cur.fetchall():
+                    origins.add(o.strip().rstrip("/"))
+        finally:
+            conn.close()
+    except Exception as e:
+        # DB hiccup: fall back to whatever we had (env default at minimum).
+        print(f"⚠️ allowed-origins load failed, using cached/default: {e}")
+        if _ORIGIN_CACHE["origins"]:
+            return _ORIGIN_CACHE["origins"]
+    _ORIGIN_CACHE["origins"] = origins
+    _ORIGIN_CACHE["loaded_at"] = now
+    return origins
+
+
+def resolve_request_origin(event):
+    """Pick the CORS origin to reflect for this request."""
+    global _REQUEST_ORIGIN
+    headers = event.get("headers") or {}
+    origin = (headers.get("origin") or headers.get("Origin") or "").strip().rstrip("/")
+    _REQUEST_ORIGIN = origin if origin and origin in _allowed_origins() else ALLOWED_ORIGIN
+
+
+def cors_headers():
+    return {
+        "Access-Control-Allow-Origin": _REQUEST_ORIGIN,
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Vary": "Origin",
+    }
+
 
 def response(status, body):
     """Helper to format API Gateway response with CORS headers"""
-    return {"statusCode": status, "headers": CORS, "body": json.dumps(body)}
+    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
 
 # ============================================
 # JWT VERIFICATION
@@ -177,7 +229,7 @@ def get_tenant(tenant_id: int = 1) -> dict:
                 "SELECT id, slug, display_name, phone, address, tax_rate, "
                 "allowed_origin, twilio_account_sid, twilio_auth_token_secret_arn, "
                 "twilio_from_number, sms_sender_name, admin_password_secret_arn, "
-                "status FROM tenants WHERE id = %s",
+                "status, invoice_footer FROM tenants WHERE id = %s",
                 (tenant_id,),
             )
             row = cur.fetchone()
@@ -229,16 +281,40 @@ def normalize_us_phone(phone_str: str) -> str | None:
     
     return None
 
-def build_invoice_text(customer, order_id, date_str, selected_services, front_spokes, rear_spokes, prices_map, subtotal, tax_rate, final_total, backend_notes, bike_description="", custom_description="", custom_price=0, tenant_brand="BROOKLYN BIKERY"):
-    """
-    Build formatted SMS invoice text.
-    Includes service list, pricing breakdown, tax calculation, and total.
+# Fallback invoice footer for tenants that haven't set tenants.invoice_footer.
+# Deliberately generic — a new shop must never inherit another shop's hours or
+# payment methods. Brooklyn Bikery's real footer lives in its tenants row
+# (set by migration 005), so BB invoices are unchanged.
+DEFAULT_INVOICE_FOOTER = "Thank you! 🙏"
 
-    tenant_brand defaults to BROOKLYN BIKERY for backward compatibility but
-    callers should pass tenant['sms_sender_name'].upper() to render the right
-    shop's brand. Hours and payment methods below are still Brooklyn Bikery-
-    specific — they'll need to move to tenant config in step 9 before any
-    second shop launches.
+
+def _format_item_line(item):
+    """Human line for one service line item on the invoice.
+
+    item: dict with keys name, quantity, price, formula.
+    Spoke-style quantity services render like the classic Brooklyn Bikery
+    wording ("Front Fix 3 Spokes"); any other multi-quantity service falls
+    back to "Name x3"; single fixed services are just the name.
+    """
+    name, qty = item["name"], int(item.get("quantity") or 1)
+    if item.get("formula") == "spoke" and "Spoke" in name:
+        plural = "s" if qty > 1 else ""
+        return name.replace("Spoke", f"{qty} Spoke{plural}")
+    if qty > 1:
+        return f"{name} x{qty}"
+    return name
+
+
+def build_invoice_text(customer, order_id, date_str, line_items, subtotal, tax_rate, final_total, backend_notes, bike_description="", tenant_brand="BROOKLYN BIKERY", invoice_footer=None):
+    """
+    Build formatted SMS invoice text from catalog-driven line items.
+
+    line_items: list of dicts {name, quantity, price, formula} — the same
+    in-memory items that were priced and written to order_services, so the
+    invoice always matches what was charged.
+
+    tenant_brand comes from tenant['sms_sender_name']; invoice_footer comes
+    from tenants.invoice_footer (per-shop hours / payment methods / sign-off).
     """
     lines = []
     lines.append(f"🚴 {tenant_brand}")
@@ -250,32 +326,9 @@ def build_invoice_text(customer, order_id, date_str, selected_services, front_sp
     lines.append("")
     lines.append("🔧 SERVICES:")
 
-    # Add selected services from the form
-    for label in selected_services:
-        tup = prices_map.get(label)
-        if tup:
-            _, price = tup
-            # Remove price from label for cleaner display
-            clean_label = label.split(' ($')[0] if ' ($' in label else label
-            lines.append(f"• {clean_label}")
-            lines.append(f"${price:.2f}")
-
-    # Add front spoke repairs if any
-    if front_spokes and front_spokes > 0:
-        spoke_cost = 33 + 2 * front_spokes  # Base $35 + $2 per additional spoke
-        lines.append(f"• Front Fix {front_spokes} Spoke{'s' if front_spokes > 1 else ''}")
-        lines.append(f"${spoke_cost:.2f}")
-
-    # Add rear spoke repairs if any
-    if rear_spokes and rear_spokes > 0:
-        spoke_cost = 33 + 2 * rear_spokes  # Base $35 + $2 per additional spoke
-        lines.append(f"• Rear Fix {rear_spokes} Spoke{'s' if rear_spokes > 1 else ''}")
-        lines.append(f"${spoke_cost:.2f}")
-
-    # Add custom service if provided
-    if custom_description and custom_price > 0:
-        lines.append(f"• {custom_description}")
-        lines.append(f"${custom_price:.2f}")
+    for item in line_items:
+        lines.append(f"• {_format_item_line(item)}")
+        lines.append(f"${float(item['price']):.2f}")
 
     # Add admin notes if any
     if backend_notes:
@@ -287,18 +340,7 @@ def build_invoice_text(customer, order_id, date_str, selected_services, front_sp
     lines.append("")
     lines.append(f"💰 TOTAL: ${subtotal:.2f} + Tax")
     lines.append("")
-    lines.append("⏰ Hours:")
-    lines.append("Mon: Closed")
-    lines.append("Tue: Closed")
-    lines.append("Wed: 6:30-8:30 PM")
-    lines.append("Thu-Fri: 10 AM-6 PM")
-    lines.append("Sat-Sun: 10 AM-4 PM")
-    lines.append("")
-    lines.append("💳 Payment Methods:")
-    lines.append("• Zelle, Venmo, CashApp, Cash")
-    lines.append("• Credit cards (+2.9% fee)")
-    lines.append("")
-    lines.append("Thank you! 🙏")
+    lines.append((invoice_footer or DEFAULT_INVOICE_FOOTER).strip())
     lines.append("")
     lines.append("Reply STOP to unsubscribe")
     return "\n".join(lines)
@@ -324,17 +366,16 @@ def lambda_handler(event, context):
         event.get('httpMethod')  # Also REST API
     )
     print(f"📌 HTTP Method: {http_method}")
-    
+
+    # Resolve which origin to reflect in CORS headers for THIS request
+    # (multi-origin: per-tenant frontends). Must run before any response.
+    resolve_request_origin(event)
+
     # Handle CORS preflight request
     if http_method == 'OPTIONS':
         return {
             "statusCode": 200,
-            "headers": {
-                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-                "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-                "Access-Control-Max-Age": "86400"  # Cache preflight for 24 hours
-            },
+            "headers": {**cors_headers(), "Access-Control-Max-Age": "86400"},
             "body": ""
         }
     
@@ -422,49 +463,54 @@ def lambda_handler(event, context):
         # order silently (e.g. correcting a historical order without re-texting).
         send_invoice = bool(body.get("sendInvoice", True))
 
-        # Service pricing map with front/rear component separation
-        # Format: "Display Label": ("database_column", price)
-        services_with_prices = {
-            "Front Flat ($25)": ("front_flat", 25),
-            "Rear Flat ($25)": ("rear_flat", 25),
-            "Front Flat E-Bike ($45)": ("front_flat_ebike", 45),
-            "Rear Flat E-Bike ($45)": ("rear_flat_ebike", 45),
-            "Front Brake Adj ($20)": ("front_brake_adj", 20),
-            "Rear Brake Adj ($20)": ("rear_brake_adj", 20),
-            "Front Brake Adj E-Bike ($35)": ("front_brake_adj_ebike", 35),
-            "Rear Brake Adj E-Bike ($35)": ("rear_brake_adj_ebike", 35),
-            "Front Replace V-Brake Pads ($10)": ("front_replace_vbrake_pads", 10),
-            "Rear Replace V-Brake Pads ($10)": ("rear_replace_vbrake_pads", 10),
-            "Front New V-Brake Pads ($15)": ("front_new_vbrake_pads", 15),
-            "Rear New V-Brake Pads ($15)": ("rear_new_vbrake_pads", 15),
-            "Front Replace Disc Brake Pads ($15)": ("front_replace_disc_pads", 15),
-            "Rear Replace Disc Brake Pads ($15)": ("rear_replace_disc_pads", 15),
-            "Front New Disc Brake Pads ($20)": ("front_new_disc_pads", 20),
-            "Rear New Disc Brake Pads ($20)": ("rear_new_disc_pads", 20),
-            "Front Hydraulic Brake Bleed ($50)": ("front_hydraulic_brake_bleed", 50),
-            "Rear Hydraulic Brake Bleed ($50)": ("rear_hydraulic_brake_bleed", 50),
-            "Front Derailleur Adj ($20)": ("front_derailleur_adj", 20),
-            "Rear Derailleur Adj ($20)": ("rear_derailleur_adj", 20),
-            "Tune-Up ($100)": ("tune_up", 100),
-            "Replace Cassette/Freewheel ($15)": ("replace_cassette", 15),
-            "New Bottom Bracket ($45)": ("new_bb", 45),
-            "Replace Chain ($15)": ("replace_chain", 15),
-            "Replace Crank/BB ($30)": ("replace_crank_bb", 30),
-            "Replace Front Brake Line ($25)": ("replace_front_brake_line", 25),
-            "Replace Rear Brake Line ($25)": ("replace_rear_brake_line", 25),
-            "Replace Front Gear Line ($25)": ("replace_front_gear_line", 25),
-            "Replace Rear Gear Line ($25)": ("replace_rear_gear_line", 25),
-            "Front Wheel Truing ($20)": ("front_wheel_true", 20),
-            "Rear Wheel Truing ($20)": ("rear_wheel_true", 20),
-            "Replace Front Rotor ($15)": ("replace_front_rotor", 15),
-            "Replace Rear Rotor ($15)": ("replace_rear_rotor", 15),
-            "Front Repack Wheel ($25)": ("front_repack_wheel", 25),
-            "Rear Repack Wheel ($25)": ("rear_repack_wheel", 25),
-            "Repack Headset ($25)": ("repack_headset", 25),
-            "Repack Headset E-Bike ($35)": ("repack_headset_ebike", 35),
-            "E-Bike Diagnostic ($40)": ("ebike_diagnostic", 40),
-            "Bike Assembly ($100)": ("bike_assembly", 100),
-            "E-Bike Assembly ($150)": ("ebike_assembly", 150),
+        # ── LEGACY label -> catalog code map ──────────────────────────────
+        # The service-entry form used to send display labels like
+        # "Front Flat ($25)". The current form sends catalog `serviceCodes`,
+        # but an admin tab cached from before the switch may still send
+        # labels. This map ONLY translates label -> code; the PRICE always
+        # comes from the tenant's service_catalog row (single source of
+        # truth), so a stale page can never charge a stale price.
+        legacy_label_to_code = {
+            "Front Flat ($25)": "front_flat",
+            "Rear Flat ($25)": "rear_flat",
+            "Front Flat E-Bike ($45)": "front_flat_ebike",
+            "Rear Flat E-Bike ($45)": "rear_flat_ebike",
+            "Front Brake Adj ($20)": "front_brake_adj",
+            "Rear Brake Adj ($20)": "rear_brake_adj",
+            "Front Brake Adj E-Bike ($35)": "front_brake_adj_ebike",
+            "Rear Brake Adj E-Bike ($35)": "rear_brake_adj_ebike",
+            "Front Replace V-Brake Pads ($10)": "front_replace_vbrake_pads",
+            "Rear Replace V-Brake Pads ($10)": "rear_replace_vbrake_pads",
+            "Front New V-Brake Pads ($15)": "front_new_vbrake_pads",
+            "Rear New V-Brake Pads ($15)": "rear_new_vbrake_pads",
+            "Front Replace Disc Brake Pads ($15)": "front_replace_disc_pads",
+            "Rear Replace Disc Brake Pads ($15)": "rear_replace_disc_pads",
+            "Front New Disc Brake Pads ($20)": "front_new_disc_pads",
+            "Rear New Disc Brake Pads ($20)": "rear_new_disc_pads",
+            "Front Hydraulic Brake Bleed ($50)": "front_hydraulic_brake_bleed",
+            "Rear Hydraulic Brake Bleed ($50)": "rear_hydraulic_brake_bleed",
+            "Front Derailleur Adj ($20)": "front_derailleur_adj",
+            "Rear Derailleur Adj ($20)": "rear_derailleur_adj",
+            "Tune-Up ($100)": "tune_up",
+            "Replace Cassette/Freewheel ($15)": "replace_cassette",
+            "New Bottom Bracket ($45)": "new_bb",
+            "Replace Chain ($15)": "replace_chain",
+            "Replace Crank/BB ($30)": "replace_crank_bb",
+            "Replace Front Brake Line ($25)": "replace_front_brake_line",
+            "Replace Rear Brake Line ($25)": "replace_rear_brake_line",
+            "Replace Front Gear Line ($25)": "replace_front_gear_line",
+            "Replace Rear Gear Line ($25)": "replace_rear_gear_line",
+            "Front Wheel Truing ($20)": "front_wheel_true",
+            "Rear Wheel Truing ($20)": "rear_wheel_true",
+            "Replace Front Rotor ($15)": "replace_front_rotor",
+            "Replace Rear Rotor ($15)": "replace_rear_rotor",
+            "Front Repack Wheel ($25)": "front_repack_wheel",
+            "Rear Repack Wheel ($25)": "rear_repack_wheel",
+            "Repack Headset ($25)": "repack_headset",
+            "Repack Headset E-Bike ($35)": "repack_headset_ebike",
+            "E-Bike Diagnostic ($40)": "ebike_diagnostic",
+            "Bike Assembly ($100)": "bike_assembly",
+            "E-Bike Assembly ($150)": "ebike_assembly",
         }
 
         # Connect to database
@@ -479,6 +525,30 @@ def lambda_handler(event, context):
         cursor = conn.cursor()
 
         try:
+            # ── getCatalog: the service-entry form fetches the tenant's menu ──
+            # Returns the active service catalog so the form renders THIS
+            # shop's services and prices instead of a hardcoded list. The
+            # response is grouped client-side; we just send ordered rows.
+            if body.get("action") == "getCatalog":
+                cursor.execute(
+                    "SELECT code, display_name, default_price, pricing_formula, "
+                    "category, sort_order FROM service_catalog "
+                    "WHERE tenant_id = %s AND is_active = 1 ORDER BY sort_order, id",
+                    (tid,),
+                )
+                services = [
+                    {
+                        "code": r[0],
+                        "name": r[1],
+                        "price": float(r[2]) if r[2] is not None else None,
+                        "formula": r[3],
+                        "category": r[4] or "other",
+                        "sort": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+                return response(200, {"services": services, "taxRate": float(tenant["tax_rate"])})
+
             today_str = str(datetime.now(ZoneInfo("America/New_York")).date())
 
             if is_new_customer:
@@ -496,9 +566,14 @@ def lambda_handler(event, context):
                     customer_id = row[0]
                     # Existing customer — preserve their name, just create a new order
                 else:
+                    # Record SMS consent as captured at the counter (TCPA).
+                    # Default True preserves the classic flow for older
+                    # clients that don't send the field.
+                    sms_consent = 1 if body.get("smsConsent", True) else 0
                     cursor.execute(
-                        "INSERT INTO customers (tenant_id, name, phone, date_created) VALUES (%s, %s, %s, %s)",
-                        (tid, name, new_phone, today_str)
+                        "INSERT INTO customers (tenant_id, name, phone, date_created, sms_consent, sms_consent_at) "
+                        "VALUES (%s, %s, %s, %s, %s, NOW())",
+                        (tid, name, new_phone, today_str, sms_consent)
                     )
                     customer_id = cursor.lastrowid
 
@@ -598,22 +673,75 @@ def lambda_handler(event, context):
             if bike_description:
                 order_updates["bike_description"] = bike_description
 
-            # Calculate total price from selected services
-            total_price = 0
-            for label in selected_services:
-                _, price = services_with_prices.get(label, (None, None))
-                if price is not None:
-                    total_price += price
+            # ── Catalog-driven pricing (single source of truth) ──────────────
+            # Load the tenant's active catalog once; every price on this order
+            # comes from it. The form sends `serviceCodes` (catalog codes); a
+            # stale cached form may still send legacy `services` labels, which
+            # are translated to codes — but even then the PRICE is the
+            # catalog's, never the label's.
+            cursor.execute(
+                "SELECT id, code, display_name, default_price, pricing_formula "
+                "FROM service_catalog WHERE tenant_id = %s AND is_active = 1",
+                (tid,),
+            )
+            catalog = {
+                r[1]: {"id": r[0], "code": r[1], "name": r[2],
+                       "price": float(r[3]) if r[3] is not None else None,
+                       "formula": r[4]}
+                for r in cursor.fetchall()
+            }
 
-            # Spoke repairs ($33 base + $2 per spoke)
-            if front_spokes > 0:
-                total_price += 33 + 2 * front_spokes
-            if rear_spokes > 0:
-                total_price += 33 + 2 * rear_spokes
+            requested_codes = list(body.get("serviceCodes") or [])
+            for label in selected_services:  # legacy label fallback
+                code = legacy_label_to_code.get(label)
+                if code and code not in requested_codes:
+                    requested_codes.append(code)
 
-            # Custom service price
-            if custom_price > 0:
-                total_price += custom_price
+            # Build the order's line items: [{catalog_id, code, name, quantity,
+            # price, formula, notes}] — used for the total, order_services rows,
+            # AND the SMS invoice, so all three always agree.
+            line_items = []
+            unknown_codes = []
+            for code in requested_codes:
+                svc = catalog.get(code)
+                if not svc:
+                    unknown_codes.append(code)
+                    continue
+                if svc["formula"] != "fixed" or svc["price"] is None:
+                    # spoke/custom services arrive via their dedicated fields
+                    continue
+                line_items.append({
+                    "catalog_id": svc["id"], "code": code, "name": svc["name"],
+                    "quantity": 1, "price": svc["price"], "formula": "fixed",
+                    "notes": None,
+                })
+            if unknown_codes:
+                # A code the tenant doesn't offer (or was deactivated between
+                # page load and submit). Refuse loudly — silently dropping a
+                # line item would under-charge without anyone noticing.
+                return response(400, {"message": f"Unknown service(s): {', '.join(sorted(unknown_codes)[:5])}. Reload the form and try again."})
+
+            # Spoke repairs (quantity-based: $33 base + $2 per spoke). Only
+            # rendered/accepted for tenants whose catalog has spoke services.
+            for qty, code in ((front_spokes, "front_fix_spoke"), (rear_spokes, "rear_fix_spoke")):
+                if qty > 0 and code in catalog:
+                    svc = catalog[code]
+                    line_items.append({
+                        "catalog_id": svc["id"], "code": code, "name": svc["name"],
+                        "quantity": qty, "price": 33 + 2 * qty, "formula": "spoke",
+                        "notes": None,
+                    })
+
+            # Custom service (ad-hoc price + description set by the admin)
+            if custom_description and custom_price > 0 and "custom_service" in catalog:
+                svc = catalog["custom_service"]
+                line_items.append({
+                    "catalog_id": svc["id"], "code": "custom_service", "name": custom_description,
+                    "quantity": 1, "price": custom_price, "formula": "custom",
+                    "notes": custom_description,
+                })
+
+            total_price = round(sum(float(it["price"]) for it in line_items), 2)
 
             # Final price with per-tenant tax rate (Brooklyn Bikery = 0.0875 NYC)
             tax_rate = float(tenant["tax_rate"])
@@ -649,12 +777,6 @@ def lambda_handler(event, context):
             # up tenant resolution from the request URL.
             # ────────────────────────────────────────────────────────────────
             try:
-                cursor.execute(
-                    "SELECT code, id FROM service_catalog WHERE tenant_id = %s",
-                    (tid,)
-                )
-                catalog_map = {code: cid for code, cid in cursor.fetchall()}
-
                 # Idempotency: an admin may resubmit the same order. Clear
                 # existing line items and re-insert based on current selection.
                 cursor.execute(
@@ -662,36 +784,12 @@ def lambda_handler(event, context):
                     (tid, order_id)
                 )
 
-                line_rows = []
-
-                # Fixed-price services selected on the form
-                for label in selected_services:
-                    col, price = services_with_prices.get(label, (None, None))
-                    if col and col in catalog_map and price is not None:
-                        line_rows.append(
-                            (tid, order_id, catalog_map[col], 1, price, None)
-                        )
-
-                # Spoke services (quantity-based; price = 33 + 2 * count)
-                if front_spokes > 0 and "front_fix_spoke" in catalog_map:
-                    spoke_price = 33 + 2 * front_spokes
-                    line_rows.append(
-                        (tid, order_id, catalog_map["front_fix_spoke"],
-                         front_spokes, spoke_price, None)
-                    )
-                if rear_spokes > 0 and "rear_fix_spoke" in catalog_map:
-                    spoke_price = 33 + 2 * rear_spokes
-                    line_rows.append(
-                        (tid, order_id, catalog_map["rear_fix_spoke"],
-                         rear_spokes, spoke_price, None)
-                    )
-
-                # Custom service (ad-hoc; price + description set by admin)
-                if custom_description and custom_price > 0 and "custom_service" in catalog_map:
-                    line_rows.append(
-                        (tid, order_id, catalog_map["custom_service"],
-                         1, custom_price, custom_description)
-                    )
+                # The exact same line_items that produced the total (and that
+                # the invoice will render) become the order_services rows.
+                line_rows = [
+                    (tid, order_id, it["catalog_id"], it["quantity"], it["price"], it["notes"])
+                    for it in line_items
+                ]
 
                 if line_rows:
                     cursor.executemany(
@@ -709,10 +807,19 @@ def lambda_handler(event, context):
                 # rows if this happens.
                 print(f"⚠️ order_services write failed for order {order_id}: {os_write_err}")
 
-            # Get updated customer info for SMS
-            cursor.execute("SELECT name, phone FROM customers WHERE id = %s AND tenant_id = %s", (customer_id, tid))
+            # Get updated customer info for SMS (incl. STOP opt-out state)
+            cursor.execute("SELECT name, phone, sms_opted_out FROM customers WHERE id = %s AND tenant_id = %s", (customer_id, tid))
             crow = cursor.fetchone()
-            customer = {"name": crow[0], "phone": crow[1]}
+            customer = {"name": crow[0], "phone": crow[1], "sms_opted_out": bool(crow[2])}
+
+            # TCPA: a customer who texted STOP must not receive invoice texts,
+            # even if the admin left the box checked. The order still saves.
+            if send_invoice and customer["sms_opted_out"]:
+                print(f"⛔ Customer {customer_id} has opted out of SMS — invoice text suppressed")
+                send_invoice = False
+                sms_suppressed_reason = "optout"
+            else:
+                sms_suppressed_reason = None
 
             cursor.execute("SELECT bike_description FROM orders WHERE id = %s AND tenant_id = %s", (order_id, tid))
             bike_row = cursor.fetchone()
@@ -727,18 +834,14 @@ def lambda_handler(event, context):
                     customer=customer,
                     order_id=order_id,
                     date_str=date_str,
-                    selected_services=selected_services,
-                    front_spokes=front_spokes,
-                    rear_spokes=rear_spokes,
-                    prices_map=services_with_prices,
+                    line_items=line_items,
                     subtotal=total_price,
                     tax_rate=tax_rate,
                     final_total=final_price,
                     backend_notes=notes,
                     bike_description=bike_desc,
-                    custom_description=custom_description,
-                    custom_price=custom_price,
                     tenant_brand=tenant["sms_sender_name"].upper(),
+                    invoice_footer=tenant.get("invoice_footer"),
                 )
 
                 # Store outbound invoice in messages table so it appears in
@@ -751,7 +854,11 @@ def lambda_handler(event, context):
                         INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number)
                         VALUES (%s, %s, 'outbound', %s, 'queued', %s, %s)
                     """, (tenant["id"], target_phone, invoice_text, twilio_from, target_phone))
+                    # Row id rides along in the SMS job so Twilio's delivery
+                    # status callback can update THIS row (sent/delivered/failed).
+                    invoice_message_row_id = cursor.lastrowid
                 except Exception as msg_err:
+                    invoice_message_row_id = None
                     print(f"⚠️ Failed to store invoice in messages table: {msg_err}")
 
             conn.commit()
@@ -761,10 +868,12 @@ def lambda_handler(event, context):
             conn.close()
 
         if not send_invoice:
-            # Admin chose not to text the customer (e.g. fixing a past order).
-            # Order is saved; no invoice SMS is queued and no outbound message
-            # is recorded. message must be exactly "Success" for the UI overlay.
-            return response(200, {"message": "Success", "order_id": order_id, "sms": "skipped"})
+            # Either the admin chose not to text the customer (sms:"skipped"),
+            # or the customer texted STOP and the send was suppressed for
+            # compliance (sms:"optout" — the UI tells the admin why).
+            # message must be exactly "Success" for the UI overlay.
+            return response(200, {"message": "Success", "order_id": order_id,
+                                  "sms": sms_suppressed_reason or "skipped"})
 
         if not target_phone:
             return response(200, {"message": "Success (no SMS sent: invalid/missing customer phone)", "order_id": order_id})
@@ -790,6 +899,8 @@ def lambda_handler(event, context):
                 "twilio_account_sid": tenant["twilio_account_sid"],
                 "twilio_auth_token_secret_arn": tenant["twilio_auth_token_secret_arn"],
                 "twilio_from_number": tenant["twilio_from_number"],
+                # Lets Twilio's status callback update this exact message row.
+                "message_row_id": invoice_message_row_id,
             }),
             ContentType='application/json'
         )

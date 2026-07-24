@@ -10,6 +10,12 @@ on:
     types: [opened, reopened, synchronize]
   workflow_dispatch:
 
+# Serialize the whole pipeline: overlapping runs would fight over the staging
+# stack that the prod gate deploys to, making gate results meaningless.
+concurrency:
+  group: deploy-pipeline
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: brooklynbikery.com
@@ -88,10 +94,113 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge --squash --delete-branch ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
 
+  prod-gate:
+    name: "Prod gate: deploy to staging + run integration tests"
+    needs: [prepare]
+    # Every PROD-target deploy must first prove itself on the staging stack.
+    # This ships the exact code that is about to hit prod to the -staging
+    # Lambdas + staging site, then runs the integration suite against it.
+    # If anything fails, the prod deploy jobs below never run.
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.prepare.outputs.target == 'prod'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Deploy Lambdas to the -staging stack
+        run: |
+          set -e
+          declare -A FUNCTIONS=(
+            ["Admin-Dashboard.py"]="AdminDashboard:1"
+            ["Backend-Form.py"]="SubmitBackendForm:1"
+            ["Customer-Form.py"]="SubmitCustomerForm:1"
+            ["Send-SMS.py"]="SendSMS:1"
+          )
+          for SRC in "${!FUNCTIONS[@]}"; do
+            IFS=':' read -r FN_NAME NEEDS_PYMYSQL <<< "${FUNCTIONS[$SRC]}"
+            TARGET_FN="${FN_NAME}-staging"
+            echo "Packaging $SRC -> $TARGET_FN"
+            BUILD_DIR=$(mktemp -d)
+            cp "$SRC" "$BUILD_DIR/lambda_function.py"
+            if [ "$NEEDS_PYMYSQL" = "1" ]; then
+              pip install pymysql==1.1.1 -t "$BUILD_DIR" --quiet
+            fi
+            ZIP="/tmp/${TARGET_FN}.zip"
+            (cd "$BUILD_DIR" && zip -rq "$ZIP" . -x "*.pyc" "__pycache__/*" "*.dist-info/*")
+            aws lambda update-function-code \
+              --function-name "$TARGET_FN" \
+              --zip-file "fileb://$ZIP" \
+              --region "$AWS_REGION" \
+              --output text --query 'LastUpdateStatus'
+            # update-function-code is async; wait so tests hit the new code.
+            aws lambda wait function-updated --function-name "$TARGET_FN" --region "$AWS_REGION"
+            rm -rf "$BUILD_DIR" "$ZIP"
+          done
+
+      - name: Set up Node (for Tailwind build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build Tailwind CSS
+        run: |
+          npm ci --silent
+          npm run build:css
+
+      - name: Sync frontend to staging bucket (with API rewrite)
+        run: |
+          for f in *.html *.css *.js *.json; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              customer-form.html) continue ;;
+              neonindex.html)     continue ;;
+            esac
+            case "$f" in
+              admin-dashboard.html|backend-form.html)
+                CACHE="no-cache, must-revalidate" ;;
+              *)
+                CACHE="public, max-age=300, must-revalidate" ;;
+            esac
+            TMP="$(mktemp)"
+            sed -e 's/rqshavktfa/dm63xxwajj/g' \
+                -e 's/rysf6hggs6/dvo3bho9mj/g' \
+                -e 's/pp7s8cgqke/0nevdp3exi/g' "$f" > "$TMP"
+            CT="$(case "$f" in *.html) echo text/html;; *.css) echo text/css;; *.js) echo application/javascript;; *.json) echo application/json;; *) echo application/octet-stream;; esac)"
+            aws s3 cp "$TMP" "s3://bikery-staging-site/$f" \
+              --content-type "$CT" --cache-control "$CACHE" --region "$AWS_REGION"
+            rm -f "$TMP"
+          done
+          aws cloudfront create-invalidation --distribution-id E28UATBUDSN4QU \
+            --paths "/*" --query 'Invalidation.Id' --output text
+
+      - name: Install test deps
+        run: pip install boto3 pymysql==1.1.1 --quiet
+
+      - name: Run integration tests against staging
+        run: python tests/staging_integration.py
+
   deploy-lambdas:
     name: Deploy Lambda functions
-    needs: [prepare]
-    if: needs.prepare.outputs.should_deploy == 'true'
+    needs: [prepare, prod-gate]
+    # Runs when: staging target (gate skipped) OR prod target with gate green.
+    if: >-
+      !failure() && !cancelled() &&
+      needs.prepare.outputs.should_deploy == 'true' &&
+      (needs.prod-gate.result == 'success' || needs.prod-gate.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -160,8 +269,13 @@ jobs:
 
   deploy-frontend:
     name: Sync frontend to S3 + invalidate CloudFront
-    needs: [prepare]
-    if: needs.prepare.outputs.should_deploy == 'true'
+    needs: [prepare, prod-gate]
+    # Same gating as deploy-lambdas: staging passes straight through, prod
+    # requires the gate to have finished green.
+    if: >-
+      !failure() && !cancelled() &&
+      needs.prepare.outputs.should_deploy == 'true' &&
+      (needs.prod-gate.result == 'success' || needs.prod-gate.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -243,13 +357,18 @@ jobs:
             fi
           done
 
-      - name: Sync sitemap + robots
+      - name: Sync sitemap + robots + brand assets
         run: |
           for f in sitemap.xml robots.txt; do
             [ -f "$f" ] && aws s3 cp "$f" "s3://${DEPLOY_BUCKET}/$f" \
               --cache-control "public, max-age=3600" \
               --region "$AWS_REGION"
           done
+          # Brand images referenced by the BlueWrench marketing pages (the
+          # html/css/js glob above doesn't cover images).
+          [ -f bluewrench-logo.png ] && aws s3 cp bluewrench-logo.png \
+            "s3://${DEPLOY_BUCKET}/bluewrench-logo.png" \
+            --cache-control "public, max-age=86400" --region "$AWS_REGION" || true
 
       - name: Invalidate CloudFront cache
         run: |

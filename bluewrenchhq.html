@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BlueWrench HQ — The operating system for service businesses</title>
+<meta name="description" content="Branded intake, service logging, automatic invoicing, and customer messaging in one platform. The system that runs Brooklyn Bikery, built for any shop that fixes, services, or repairs." />
+<meta name="robots" content="noindex,nofollow" />
+<meta property="og:title" content="BlueWrench HQ — Run your entire service business on one system" />
+<meta property="og:description" content="Intake, service logging, auto-priced invoices that text themselves, and customer messaging. Built by operators, for any service shop." />
+<link rel="icon" type="image/png" href="bluewrench-logo.png" />
+<script src="https://unpkg.com/lucide@0.471.0/dist/umd/lucide.min.js"></script>
+
+<style>
+  :root{
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --ink:#06070E;
+    --ink-2:#0A0C17;
+    --light:#F4F6FB;
+    --light-2:#FFFFFF;
+    --card:#FFFFFF;
+    --d-text:#0C1326;     /* dark text on light */
+    --d-muted:#5B6678;
+    --l-text:#F2F5FF;     /* light text on dark */
+    --l-muted:#9AA4BE;
+    --blue:#2F6BFF;
+    --cyan:#1FC6E8;
+    --magenta:#E14BD8;
+    --grad:linear-gradient(100deg,#2F6BFF 0%,#22CFEE 50%,#E14BD8 100%);
+    --line-d:rgba(255,255,255,.08);
+    --line-l:rgba(12,19,38,.09);
+    --r:18px;--r-lg:26px;
+    --maxw:1180px;
+    --ease:cubic-bezier(.2,.7,.2,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  ::selection{background:rgba(47,107,255,.25)}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);background:var(--ink);color:var(--l-text);line-height:1.6;overflow-x:hidden}
+  a{text-decoration:none;color:inherit}
+  img{display:block;max-width:100%}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px}
+
+  /* ── Type ── */
+  h1,h2,h3{font-weight:800;letter-spacing:-.025em;line-height:1.05}
+  .eyebrow{font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--blue)}
+  .sec-dark .eyebrow{color:var(--cyan)}
+  .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+
+  /* ── Buttons ── */
+  .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--sans);font-weight:600;font-size:15px;
+       padding:13px 22px;border-radius:13px;cursor:pointer;border:1px solid transparent;transition:.22s var(--ease);white-space:nowrap}
+  .btn i{width:17px;height:17px}
+  .btn-primary{color:#fff;background:var(--grad);background-size:150% 150%;box-shadow:0 8px 26px -10px rgba(47,120,255,.65)}
+  .btn-primary:hover{transform:translateY(-2px);background-position:100% 0;box-shadow:0 14px 34px -10px rgba(47,120,255,.8)}
+  .btn-dark{color:var(--l-text);background:rgba(255,255,255,.05);border-color:var(--line-d)}
+  .btn-dark:hover{background:rgba(255,255,255,.09);transform:translateY(-2px)}
+  .btn-light{color:var(--d-text);background:#fff;border-color:var(--line-l);box-shadow:0 4px 16px -8px rgba(12,19,38,.25)}
+  .btn-light:hover{transform:translateY(-2px);box-shadow:0 10px 26px -10px rgba(12,19,38,.3)}
+
+  /* ── Sections ── */
+  section{position:relative}
+  .sec-dark{background:var(--ink);color:var(--l-text)}
+  .sec-dark.alt{background:var(--ink-2)}
+  .sec-light{background:var(--light);color:var(--d-text)}
+  .sec-light.white{background:var(--light-2)}
+  .pad{padding:108px 0}
+  .head{max-width:660px;margin:0 auto 56px;text-align:center}
+  .head.left{margin-left:0;text-align:left}
+  .head h2{font-size:clamp(30px,4.4vw,46px);margin:14px 0 0}
+  .head p{margin-top:16px;font-size:clamp(16px,1.5vw,18px)}
+  .sec-light .head p{color:var(--d-muted)}
+  .sec-dark .head p{color:var(--l-muted)}
+
+  /* ── Nav ── */
+  header.nav{position:fixed;top:0;left:0;right:0;z-index:60;transition:.3s var(--ease);border-bottom:1px solid transparent}
+  header.nav.scrolled{background:rgba(6,7,14,.72);backdrop-filter:blur(18px);border-bottom-color:var(--line-d)}
+  .nav-in{max-width:var(--maxw);margin:0 auto;padding:15px 26px;display:flex;align-items:center;justify-content:space-between;gap:22px}
+  .brand-logo{height:29px;width:auto}
+  .nav-links{display:flex;gap:30px}
+  .nav-links a{color:var(--l-muted);font-size:14.5px;font-weight:500;transition:.2s}
+  .nav-links a:hover{color:#fff}
+  .nav-cta{display:flex;align-items:center;gap:13px}
+  .menu-btn{display:none;background:none;border:none;color:#fff;cursor:pointer}
+
+  /* ── Hero ── */
+  .hero{padding:170px 0 96px;position:relative;overflow:hidden}
+  .hero::before{content:"";position:absolute;top:-30%;right:-10%;width:760px;height:760px;
+    background:radial-gradient(circle,rgba(47,107,255,.18),transparent 62%);pointer-events:none}
+  .hero::after{content:"";position:absolute;top:-12%;right:6%;width:540px;height:540px;
+    background:radial-gradient(circle,rgba(225,75,216,.14),transparent 60%);pointer-events:none}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;position:relative}
+  .hero-logo{width:min(300px,72%);margin-bottom:26px}
+  .hero h1{font-size:clamp(40px,6vw,72px);font-weight:800;margin:8px 0 22px}
+  .hero .sub{font-size:clamp(17px,1.7vw,20px);color:var(--l-muted);max-width:520px}
+  .hero-cta{display:flex;gap:13px;margin:34px 0 26px;flex-wrap:wrap}
+  .hero-trust{display:flex;align-items:center;gap:9px;color:var(--l-muted);font-size:14px}
+  .hero-trust b{color:#fff;font-weight:600}
+  .hero-trust .sep{width:4px;height:4px;border-radius:50%;background:var(--l-muted);opacity:.5}
+
+  /* product card (clean, light) */
+  .shot{background:#fff;border-radius:22px;padding:20px;box-shadow:0 50px 90px -40px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.06);color:var(--d-text)}
+  .shot-top{display:flex;align-items:center;justify-content:space-between;padding-bottom:15px;border-bottom:1px solid var(--line-l)}
+  .shot-top .t{font-weight:700;font-size:15px}
+  .shot-top .tag{font-size:12px;font-weight:600;color:#12B36B;background:rgba(18,179,107,.1);padding:5px 11px;border-radius:999px;display:flex;align-items:center;gap:6px}
+  .shot-top .tag i{width:13px;height:13px}
+  .row{display:flex;align-items:center;gap:13px;padding:14px 2px;border-bottom:1px solid var(--line-l)}
+  .row .av{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;background:var(--grad);flex-shrink:0}
+  .row .info{flex:1;min-width:0}
+  .row .info .n{font-weight:600;font-size:15px}
+  .row .info .s{font-size:13px;color:var(--d-muted)}
+  .row .p{font-weight:700;font-size:15px}
+  .shot-foot{display:flex;align-items:center;justify-content:space-between;padding-top:15px}
+  .shot-foot .lbl{font-size:13px;color:var(--d-muted)}
+  .shot-foot .total{font-weight:800;font-size:20px}
+
+  /* ── Trust strip ── */
+  .trust{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .trust .it{display:flex;align-items:center;gap:14px}
+  .trust .ic{width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:rgba(47,107,255,.08);color:var(--blue);flex-shrink:0}
+  .trust .ic i{width:21px;height:21px}
+  .trust h4{font-size:15.5px;font-weight:700;margin-bottom:2px}
+  .trust p{font-size:13.5px;color:var(--d-muted)}
+
+  /* ── Feature grid (light) ── */
+  .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  .fcard{background:#fff;border:1px solid var(--line-l);border-radius:var(--r);padding:30px;transition:.28s var(--ease)}
+  .fcard:hover{transform:translateY(-4px);box-shadow:0 26px 50px -28px rgba(12,19,38,.28);border-color:rgba(47,107,255,.2)}
+  .fcard .ic{width:50px;height:50px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:var(--grad);margin-bottom:20px}
+  .fcard .ic i{width:24px;height:24px;color:#fff}
+  .fcard h3{font-size:19px;font-weight:700;margin-bottom:9px}
+  .fcard p{font-size:14.5px;color:var(--d-muted)}
+
+  /* ── Steps (dark) ── */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+  .step{padding:6px 4px}
+  .step .num{font-size:14px;font-weight:700;color:var(--cyan);margin-bottom:18px}
+  .step .ic{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);border:1px solid var(--line-d);margin-bottom:16px}
+  .step .ic i{width:22px;height:22px;color:#fff}
+  .step h3{font-size:18px;font-weight:700;margin-bottom:7px}
+  .step p{font-size:14px;color:var(--l-muted)}
+
+  /* ── Use cases (light) ── */
+  .uc{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .ucard{display:flex;gap:15px;padding:24px;border-radius:var(--r);background:#fff;border:1px solid var(--line-l);transition:.25s var(--ease)}
+  .ucard:hover{transform:translateY(-3px);box-shadow:0 22px 44px -26px rgba(12,19,38,.25)}
+  .ucard .ic{width:44px;height:44px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(47,107,255,.08);color:var(--blue)}
+  .ucard .ic i{width:21px;height:21px}
+  .ucard h3{font-size:16.5px;font-weight:700;margin-bottom:4px}
+  .ucard p{font-size:13.5px;color:var(--d-muted)}
+
+  /* ── Pricing (light) ── */
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:stretch;max-width:1040px;margin:0 auto}
+  .plan{background:#fff;border:1px solid var(--line-l);border-radius:var(--r-lg);padding:32px;display:flex;flex-direction:column}
+  .plan.pop{border-color:transparent;box-shadow:0 0 0 2px var(--blue),0 30px 60px -34px rgba(47,107,255,.5);position:relative}
+  .plan .pop-tag{position:absolute;top:-12px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#fff;background:var(--grad);padding:5px 14px;border-radius:999px}
+  .plan .pn{font-size:14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--d-muted)}
+  .plan .pr{font-size:46px;font-weight:800;letter-spacing:-.03em;margin:14px 0 2px;line-height:1}
+  .plan .pr span{font-size:16px;font-weight:500;color:var(--d-muted);letter-spacing:0}
+  .plan .pd{font-size:14px;color:var(--d-muted);min-height:40px;margin-bottom:22px}
+  .plan ul{list-style:none;display:flex;flex-direction:column;gap:11px;margin-bottom:26px;flex:1}
+  .plan li{display:flex;gap:10px;font-size:14px;align-items:flex-start}
+  .plan li i{width:17px;height:17px;color:var(--blue);flex-shrink:0;margin-top:3px}
+  .plan li.h{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--d-muted)}
+  .plan li.h i{display:none}
+  .plan .btn{justify-content:center;width:100%}
+
+  /* ── CTA ── */
+  .cta{position:relative;border-radius:var(--r-lg);background:var(--grad);overflow:hidden;text-align:center;padding:74px 36px}
+  .cta::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 130% at 50% -10%,rgba(255,255,255,.18),transparent 55%);pointer-events:none}
+  .cta h2{font-size:clamp(30px,4.4vw,48px);color:#fff;margin-bottom:14px;position:relative}
+  .cta p{color:rgba(255,255,255,.9);font-size:18px;max-width:520px;margin:0 auto 30px;position:relative}
+  .cta .btn{background:#fff;color:var(--blue);position:relative;box-shadow:0 14px 30px -12px rgba(0,0,0,.4)}
+  .cta .btn:hover{transform:translateY(-2px)}
+  .cta .small{margin-top:16px;color:rgba(255,255,255,.8);font-size:13px;position:relative}
+
+  /* ── Footer ── */
+  footer{background:var(--ink);padding:60px 0 38px;border-top:1px solid var(--line-d)}
+  .foot-top{display:flex;justify-content:space-between;gap:40px;flex-wrap:wrap;margin-bottom:42px}
+  .foot-brand{max-width:300px}
+  .foot-brand .brand-logo{height:32px;margin-bottom:14px}
+  .foot-brand p{color:var(--l-muted);font-size:14px}
+  .foot-cols{display:flex;gap:60px;flex-wrap:wrap}
+  .foot-col h4{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--l-muted);margin-bottom:15px}
+  .foot-col a{display:block;color:var(--l-muted);font-size:14px;margin-bottom:11px;transition:.2s}
+  .foot-col a:hover{color:#fff}
+  .foot-bot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;padding-top:24px;border-top:1px solid var(--line-d);color:var(--l-muted);font-size:13px}
+
+  /* ── Reveal ── */
+  .rev{opacity:0;transform:translateY(20px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+  .rev.in{opacity:1;transform:none}
+  .stg>*{opacity:0;transform:translateY(18px);transition:opacity .6s var(--ease),transform .6s var(--ease)}
+  .stg.in>*{opacity:1;transform:none}
+  .stg.in>*:nth-child(2){transition-delay:.07s}
+  .stg.in>*:nth-child(3){transition-delay:.14s}
+  .stg.in>*:nth-child(4){transition-delay:.21s}
+  .stg.in>*:nth-child(5){transition-delay:.28s}
+  .stg.in>*:nth-child(6){transition-delay:.35s}
+
+  /* ── Responsive ── */
+  @media (max-width:920px){
+    .hero-grid{grid-template-columns:1fr;gap:44px}
+    .feat,.steps,.uc{grid-template-columns:repeat(2,1fr)}
+    .trust{grid-template-columns:1fr;gap:18px}
+    .plans{grid-template-columns:1fr;max-width:440px}
+    .nav-links{display:none}
+  }
+  @media (max-width:600px){
+    .wrap{padding:0 18px}
+    .pad{padding:74px 0}
+    .hero{padding:130px 0 72px}
+    .feat,.steps,.uc{grid-template-columns:1fr}
+    .nav-cta .btn-dark{display:none}
+    .cta{padding:52px 22px}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rev,.stg>*{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a href="#top"><img class="brand-logo" src="bluewrench-logo.png?v=2" alt="BlueWrench HQ" /></a>
+    <nav class="nav-links">
+      <a href="/bluewrench-features.html">Features</a>
+      <a href="/bluewrench-industries.html">Industries</a>
+      <a href="/bluewrench-pricing.html">Pricing</a>
+      <a href="/bluewrench-contact.html">Contact</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="/bluewrench-pricing.html" class="btn btn-dark">Pricing</a>
+      <a class="btn btn-primary js-cta">Request early access</a>
+    </div>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="sec-dark hero" id="top">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div class="stg" id="hero-copy">
+        <img class="hero-logo" src="bluewrench-logo.png?v=2" alt="BlueWrench HQ" width="1000" height="160" />
+        <div class="eyebrow">The operating system for service businesses</div>
+        <h1>Run your entire <span class="grad">service business</span> on one system.</h1>
+        <p class="sub">Branded intake, service logging, auto-priced invoices that text themselves, and customer messaging — the platform that runs Brooklyn Bikery, built for any shop that fixes, services, or repairs.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary js-cta"><i data-lucide="arrow-right"></i>Request early access</a>
+          <a href="#features" class="btn btn-dark">See the platform</a>
+        </div>
+        <div class="hero-trust"><span>Now powering</span><b>Brooklyn Bikery</b><span class="sep"></span><span>built by operators</span></div>
+      </div>
+
+      <div class="rev" id="hero-shot">
+        <div class="shot">
+          <div class="shot-top">
+            <span class="t">Today's service queue</span>
+            <span class="tag"><i data-lucide="check"></i>Invoices sent</span>
+          </div>
+          <div class="row">
+            <div class="av">RC</div>
+            <div class="info"><div class="n">Rivera Cycles</div><div class="s">Tune-up, brake bleed, new chain</div></div>
+            <div class="p">$142.00</div>
+          </div>
+          <div class="row">
+            <div class="av">JP</div>
+            <div class="info"><div class="n">James Park</div><div class="s">Flat repair, derailleur adjust</div></div>
+            <div class="p">$48.00</div>
+          </div>
+          <div class="row" style="border-bottom:none">
+            <div class="av">MK</div>
+            <div class="info"><div class="n">Maliki K.</div><div class="s">Full overhaul, wheel true</div></div>
+            <div class="p">$210.50</div>
+          </div>
+          <div class="shot-foot">
+            <span class="lbl">3 jobs · auto-priced with tax</span>
+            <span class="total">$400.50</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRUST STRIP (light) -->
+<section class="sec-light white">
+  <div class="wrap" style="padding:40px 26px">
+    <div class="trust rev">
+      <div class="it"><div class="ic"><i data-lucide="clipboard-check"></i></div><div><h4>Live in a day</h4><p>Set your services and pricing, share your form, start logging.</p></div></div>
+      <div class="it"><div class="ic"><i data-lucide="message-square"></i></div><div><h4>Invoices that send themselves</h4><p>A clean text goes out the moment a job is logged.</p></div></div>
+      <div class="it"><div class="ic"><i data-lucide="shield-check"></i></div><div><h4>Your brand, your customers</h4><p>Isolated per shop, yours to keep and export.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES (light) -->
+<section class="sec-light pad" id="features">
+  <div class="wrap">
+    <div class="head rev">
+      <div class="eyebrow">The platform</div>
+      <h2>Everything the front desk needs.</h2>
+      <p>The full counter-to-customer workflow, built from running a real shop every day.</p>
+    </div>
+    <div class="feat stg">
+      <div class="fcard"><div class="ic"><i data-lucide="clipboard-list"></i></div><h3>Branded intake forms</h3><p>Customers describe the job on a form that looks like you — your name, services, and pricing. Or add them at the counter in seconds.</p></div>
+      <div class="fcard"><div class="ic"><i data-lucide="calculator"></i></div><h3>Service logging &amp; auto-pricing</h3><p>Check off what you did. The system totals parts, labor, and tax to the cent — so the price is right every time.</p></div>
+      <div class="fcard"><div class="ic"><i data-lucide="send"></i></div><h3>Automatic SMS invoicing</h3><p>The moment a job is logged, a clean invoice texts to the customer. No chasing, no typing.</p></div>
+      <div class="fcard"><div class="ic"><i data-lucide="messages-square"></i></div><h3>Two-way messaging</h3><p>Reply to customers from the dashboard, with full thread history on every number.</p></div>
+      <div class="fcard"><div class="ic"><i data-lucide="layout-dashboard"></i></div><h3>Order &amp; customer dashboard</h3><p>Every order, every customer, every dollar — searchable in one place.</p></div>
+      <div class="fcard"><div class="ic"><i data-lucide="building-2"></i></div><h3>Multi-shop, multi-brand</h3><p>Run one location or fifty. Each shop keeps its own brand, data, and phone number.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS (dark) -->
+<section class="sec-dark alt pad" id="how">
+  <div class="wrap">
+    <div class="head rev">
+      <div class="eyebrow">How it works</div>
+      <h2>From walk-in to paid, on rails.</h2>
+      <p>Four steps, automated where it counts.</p>
+    </div>
+    <div class="steps stg">
+      <div class="step"><div class="num">Step 1</div><div class="ic"><i data-lucide="clipboard-pen"></i></div><h3>Intake</h3><p>The customer fills your branded form, or you add them at the counter in seconds.</p></div>
+      <div class="step"><div class="num">Step 2</div><div class="ic"><i data-lucide="list-checks"></i></div><h3>Log the work</h3><p>Check off services as you do them. Add notes, parts, and custom line items.</p></div>
+      <div class="step"><div class="num">Step 3</div><div class="ic"><i data-lucide="badge-dollar-sign"></i></div><h3>Price itself</h3><p>The job totals with your pricing and tax automatically. No mental math.</p></div>
+      <div class="step"><div class="num">Step 4</div><div class="ic"><i data-lucide="message-square-text"></i></div><h3>Invoice sends</h3><p>A clean invoice texts to their phone the moment it's done. History saved.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- INDUSTRIES (light) -->
+<section class="sec-light white pad" id="industries">
+  <div class="wrap">
+    <div class="head rev">
+      <div class="eyebrow">Industries</div>
+      <h2>One platform. Every kind of shop.</h2>
+      <p>If you take in work, do it, and charge for it — BlueWrench fits.</p>
+    </div>
+    <div class="uc stg">
+      <div class="ucard"><div class="ic"><i data-lucide="bike"></i></div><div><h3>Bike shops</h3><p>Tune-ups, flats, overhauls, builds — priced to the spoke.</p></div></div>
+      <div class="ucard"><div class="ic"><i data-lucide="car"></i></div><div><h3>Auto &amp; motorcycle</h3><p>Service tickets and labor with invoices that go out on pickup.</p></div></div>
+      <div class="ucard"><div class="ic"><i data-lucide="washing-machine"></i></div><div><h3>Appliance &amp; electronics</h3><p>Diagnostics, repairs, and follow-ups tracked per customer.</p></div></div>
+      <div class="ucard"><div class="ic"><i data-lucide="scissors"></i></div><div><h3>Salons &amp; barbershops</h3><p>Services, add-ons, and receipts texted before they leave the chair.</p></div></div>
+      <div class="ucard"><div class="ic"><i data-lucide="paw-print"></i></div><div><h3>Pet grooming</h3><p>Per-pet history, package pricing, and ready-for-pickup texts.</p></div></div>
+      <div class="ucard"><div class="ic"><i data-lucide="hammer"></i></div><div><h3>Small-engine &amp; equipment</h3><p>Intake, repair logs, and invoicing for any take-it-in trade.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING (light) -->
+<section class="sec-light pad" id="pricing">
+  <div class="wrap">
+    <div class="head rev">
+      <div class="eyebrow">Pricing</div>
+      <h2>Flat pricing per shop.</h2>
+      <p>Billed monthly. Annual plans save two months. Early-access pricing locks for your first year.</p>
+    </div>
+    <div class="plans stg">
+      <div class="plan">
+        <div class="pn">Starter</div>
+        <div class="pr">$59<span>/mo</span></div>
+        <div class="pd">Everything a single shop needs to run the counter.</div>
+        <ul>
+          <li><i data-lucide="check"></i>1 shop</li>
+          <li><i data-lucide="check"></i>Branded intake form</li>
+          <li><i data-lucide="check"></i>Service logging &amp; auto-pricing</li>
+          <li><i data-lucide="check"></i>Automatic SMS invoicing</li>
+          <li><i data-lucide="check"></i>Order &amp; customer dashboard</li>
+          <li><i data-lucide="check"></i>Email support</li>
+        </ul>
+        <a class="btn btn-light js-cta">Request early access</a>
+      </div>
+      <div class="plan pop">
+        <span class="pop-tag">Most popular</span>
+        <div class="pn">Pro</div>
+        <div class="pr">$119<span>/mo</span></div>
+        <div class="pd">For busy shops that live in messages and history.</div>
+        <ul>
+          <li class="h">Everything in Starter, plus</li>
+          <li><i data-lucide="check"></i>Two-way customer messaging</li>
+          <li><i data-lucide="check"></i>Web push notifications</li>
+          <li><i data-lucide="check"></i>Full customer history &amp; search</li>
+          <li><i data-lucide="check"></i>Data export</li>
+          <li><i data-lucide="check"></i>Priority support</li>
+        </ul>
+        <a class="btn btn-primary js-cta">Request early access</a>
+      </div>
+      <div class="plan">
+        <div class="pn">Multi-location</div>
+        <div class="pr">$299<span>/mo</span></div>
+        <div class="pd">Run many shops or brands from one HQ.</div>
+        <ul>
+          <li class="h">Everything in Pro, plus</li>
+          <li><i data-lucide="check"></i>Unlimited shops &amp; brands</li>
+          <li><i data-lucide="check"></i>Per-shop numbers &amp; domains</li>
+          <li><i data-lucide="check"></i>Multiple admin seats</li>
+          <li><i data-lucide="check"></i>Dedicated onboarding</li>
+        </ul>
+        <a class="btn btn-light js-cta">Talk to us</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA (dark) -->
+<section class="sec-dark pad">
+  <div class="wrap">
+    <div class="cta rev">
+      <h2>Ready to run your shop on BlueWrench?</h2>
+      <p>Get early access and we'll help you set up your services, pricing, and intake form — usually the same day.</p>
+      <a class="btn js-cta"><i data-lucide="arrow-right"></i>Request early access</a>
+      <div class="small">No credit card. We reply within one business day.</div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <img class="brand-logo" src="bluewrench-logo.png?v=2" alt="BlueWrench HQ" />
+        <p>The operating system for service businesses. Branded intake, service logging, automatic invoicing, and customer messaging — in one platform.</p>
+      </div>
+      <div class="foot-cols">
+        <div class="foot-col">
+          <h4>Platform</h4>
+          <a href="/bluewrench-features.html">Features</a>
+          <a href="/bluewrench-industries.html">Industries</a>
+          <a href="/bluewrench-pricing.html">Pricing</a>
+        </div>
+        <div class="foot-col">
+          <h4>Company</h4>
+          <a href="/bluewrench-contact.html">Contact</a>
+          <a class="js-cta">Early access</a>
+          <a href="https://brooklynbikery.com" target="_blank" rel="noopener">Brooklyn Bikery</a>
+        </div>
+        <div class="foot-col">
+          <h4>Legal</h4>
+          <a href="/bluewrench-terms.html">Terms of Service</a>
+          <a href="/bluewrench-privacy.html">Privacy Policy</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bot">
+      <span>© 2026 BlueWrench HQ — A Brooklyn Bikery company</span>
+      <span>Built in Brooklyn, NY</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  lucide.createIcons();
+  const nav=document.getElementById('nav');
+  const onScroll=()=>nav.classList.toggle('scrolled',window.scrollY>20);
+  onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.12,rootMargin:'0px 0px -6% 0px'});
+  document.querySelectorAll('.rev,.stg').forEach(el=>io.observe(el));
+  requestAnimationFrame(()=>{document.getElementById('hero-copy').classList.add('in');setTimeout(()=>document.getElementById('hero-shot').classList.add('in'),150);});
+
+  const SUBJECT=encodeURIComponent('BlueWrench HQ — Early access request');
+  const BODY=encodeURIComponent('Hi BlueWrench HQ team,\n\nI run a service business and would like early access.\n\nShop name:\nWhat we do:\nNumber of locations:\nBest way to reach me:\n\nThanks!');
+  const MAILTO='mailto:supergalaxyguy007@gmail.com?subject='+SUBJECT+'&body='+BODY;
+  document.querySelectorAll('.js-cta').forEach(a=>a.setAttribute('href',MAILTO));
+</script>
+</body>
+</html>
