@@ -19,13 +19,14 @@ Requires: boto3, pymysql, and AWS credentials with access to the staging stack
 NOTE: staging resource IDs are pinned here. If the staging stack is rebuilt with new
 API IDs, update STAGING below (also referenced in deploy.yml's staging frontend rewrite).
 """
-import sys, json, time, base64, hmac, hashlib
+import os, sys, json, time, base64, hmac, hashlib
 import urllib.request, urllib.error
 import boto3, pymysql
 
 REGION = "us-east-1"
 STAGING = {
     "admin_api":   "https://dm63xxwajj.execute-api.us-east-1.amazonaws.com/stage",
+    "admin_fn":    "AdminDashboard-staging",
     "backend_fn":  "SubmitBackendForm-staging",
     "sendsms_fn":  "SendSMS-staging",
     "db_secret":   "bikeshop-credentials-staging",
@@ -41,12 +42,54 @@ sm  = boto3.client("secretsmanager", region_name=REGION)
 lam = boto3.client("lambda", region_name=REGION)
 
 def _secret(name): return json.loads(sm.get_secret_value(SecretId=name)["SecretString"])
+
+# ── DB access via the in-VPC bridge ────────────────────────────────────────
+# GitHub-hosted runners cannot reach RDS (the DB security group is
+# IP-allowlisted and runner IPs are dynamic), so the suite routes SQL through
+# StagingTestRunner-staging — a Lambda in the app's VPC that runs each query
+# against bikeshop_staging and refuses any non-staging schema. These shims
+# make that bridge look exactly like the pymysql DictCursor the tests expect,
+# so every test body is unchanged. When RDS is directly reachable (e.g. a dev
+# machine on the allowlist) set BIKERY_DIRECT_DB=1 to bypass the bridge.
+STAGING.setdefault("db_bridge_fn", "StagingTestRunner-staging")
+_DIRECT_DB = os.environ.get("BIKERY_DIRECT_DB") == "1"
+
+class _BridgeCursor:
+    def __init__(self): self._rows = []; self._i = 0; self.rowcount = -1; self.lastrowid = None
+    def execute(self, sql, params=None):
+        r = lam.invoke(FunctionName=STAGING["db_bridge_fn"],
+                       Payload=json.dumps({"query": sql, "params": list(params) if params else []}).encode())
+        out = json.loads(r["Payload"].read())
+        if not isinstance(out, dict) or not out.get("ok"):
+            raise RuntimeError(f"bridge query failed: {out.get('error') if isinstance(out, dict) else out}")
+        self._rows = out.get("rows") or []; self._i = 0
+        self.rowcount = out.get("rowcount", -1); self.lastrowid = out.get("lastrowid")
+        return self.rowcount
+    def fetchone(self):
+        if self._i >= len(self._rows): return None
+        row = self._rows[self._i]; self._i += 1; return row
+    def fetchall(self):
+        rest = self._rows[self._i:]; self._i = len(self._rows); return rest
+    def close(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+class _BridgeConn:
+    def cursor(self): return _BridgeCursor()
+    def commit(self): pass      # bridge autocommits each statement
+    def rollback(self): pass
+    def close(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
 def _db():
-    c = _secret(STAGING["db_secret"])
-    assert c["database"] == "bikeshop_staging", f"SAFETY: db secret points at {c['database']}, not staging!"
-    return pymysql.connect(host=c["host"], user=c["user"], password=c["password"],
-                           database=c["database"], charset="utf8mb4",
-                           cursorclass=pymysql.cursors.DictCursor, autocommit=True, connect_timeout=10)
+    if _DIRECT_DB:
+        c = _secret(STAGING["db_secret"])
+        assert c["database"] == "bikeshop_staging", f"SAFETY: db secret points at {c['database']}, not staging!"
+        return pymysql.connect(host=c["host"], user=c["user"], password=c["password"],
+                               database=c["database"], charset="utf8mb4",
+                               cursorclass=pymysql.cursors.DictCursor, autocommit=True, connect_timeout=10)
+    return _BridgeConn()
 
 def _mint_jwt():
     secret = _secret(STAGING["jwt_secret"])["secret"]
@@ -56,24 +99,57 @@ def _mint_jwt():
     s = b64(hmac.new(secret.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest())
     return f"{h}.{p}.{s}"
 
-def _http(url, body, token=None, _attempt=0):
-    headers = {"Content-Type": "application/json"}
-    if token: headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers=headers)
+def _http(url, body, token=None):
+    """POST to the admin 'API' by invoking the Lambda directly.
+
+    Direct invocation (instead of the public execute-api URL) makes the suite
+    runnable from ANY network position with AWS credentials: a developer
+    machine, GitHub's runners, or the in-VPC StagingTestRunner Lambda (whose
+    subnet has AWS-service endpoints but no NAT, so public URLs hang). The
+    handler sees the same API-Gateway-v2-shaped event either way.
+    """
+    headers = {"content-type": "application/json"}
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    event = {
+        "version": "2.0",
+        "rawPath": "/stage/AdminDashboard",
+        "requestContext": {"http": {"method": "POST", "path": "/stage/AdminDashboard"},
+                            "domainName": "dm63xxwajj.execute-api.us-east-1.amazonaws.com"},
+        "headers": headers,
+        "body": json.dumps(body),
+        "isBase64Encoded": False,
+    }
+    r = lam.invoke(FunctionName=STAGING["admin_fn"], Payload=json.dumps(event).encode())
+    out = json.loads(r["Payload"].read())
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        try: return e.code, json.loads(e.read())
-        except Exception: return e.code, {}
-    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-        # Transient network flake (seen on CI runners): one retry after a
-        # short pause before letting the test fail for real.
-        if _attempt < 2:
-            print(f"    (transient {type(e).__name__} on {url.rsplit('/',1)[-1]}, retrying...)")
-            time.sleep(3)
-            return _http(url, body, token, _attempt + 1)
-        raise
+        parsed = json.loads(out.get("body") or "{}")
+    except Exception:
+        parsed = {}
+    return out.get("statusCode"), parsed
+
+
+def _invoke_admin_webhook(form, signature, row_id):
+    """Deliver a Twilio-style webhook (form-encoded) straight to the Lambda,
+    shaped exactly like API Gateway would deliver it — incl. the fields the
+    signature validator uses to reconstruct the public URL."""
+    import urllib.parse as _up
+    event = {
+        "version": "2.0",
+        "rawPath": "/stage/AdminDashboard",
+        "rawQueryString": f"msgRowId={row_id}" if row_id is not None else "",
+        "queryStringParameters": ({"msgRowId": str(row_id)} if row_id is not None else None),
+        "requestContext": {"http": {"method": "POST", "path": "/stage/AdminDashboard"},
+                            "domainName": "dm63xxwajj.execute-api.us-east-1.amazonaws.com"},
+        "headers": {"content-type": "application/x-www-form-urlencoded",
+                     "x-forwarded-proto": "https",
+                     "x-twilio-signature": signature},
+        "body": _up.urlencode(form),
+        "isBase64Encoded": False,
+    }
+    r = lam.invoke(FunctionName=STAGING["admin_fn"], Payload=json.dumps(event).encode())
+    out = json.loads(r["Payload"].read())
+    return out.get("statusCode")
 
 def _invoke_backend(payload):
     event = {"httpMethod": "POST", "requestContext": {"http": {"method": "POST"}},
@@ -114,8 +190,21 @@ def test_wrong_order_regression():
     cidA = cidB = oidA = oidB = None
     try:
         with conn.cursor() as c:
-            c.execute("SELECT id FROM customers WHERE phone IN (%s,%s)", (A_PHONE, B_PHONE))
-            if c.fetchall(): raise AssertionError("test phones already present; aborting to avoid clobber")
+            # Self-heal residue from an interrupted prior run — but ONLY rows
+            # that carry this test's own signature (ITEST_* names on the
+            # reserved +1999555 phones). Anything else on these phones is
+            # unexpected real data: abort rather than clobber.
+            c.execute("SELECT id, name FROM customers WHERE phone IN (%s,%s)", (A_PHONE, B_PHONE))
+            leftovers = c.fetchall()
+            foreign = [r for r in leftovers if not (r["name"] or "").startswith("ITEST_")]
+            if foreign:
+                raise AssertionError(f"non-test rows on reserved test phones: {foreign}; aborting to avoid clobber")
+            for r in leftovers:
+                c.execute("DELETE FROM order_services WHERE order_id IN (SELECT id FROM orders WHERE customer_id=%s)", (r["id"],))
+                c.execute("DELETE FROM orders WHERE customer_id=%s", (r["id"],))
+                c.execute("DELETE FROM customers WHERE id=%s", (r["id"],))
+            if leftovers:
+                print(f"    (cleaned {len(leftovers)} ITEST_ residue row(s) from an interrupted run)")
             today = time.strftime("%Y-%m-%d")
             c.execute("INSERT INTO customers (name,phone,date_created) VALUES ('ITEST_A',%s,%s)", (A_PHONE, today)); cidA = c.lastrowid
             c.execute("INSERT INTO customers (name,phone,date_created) VALUES ('ITEST_B',%s,%s)", (B_PHONE, today)); cidB = c.lastrowid
@@ -358,8 +447,10 @@ def test_sms_compliance_and_status():
             # ── status callback: signed 'delivered' updates the row ──────
             c.execute("INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number) "
                       "VALUES (1, %s, 'outbound', 'status test', 'queued', '+15005550006', %s)", (PHONE, PHONE))
-            c.execute("SELECT LAST_INSERT_ID() AS id")
-            row_id = c.fetchone()["id"]
+            # Use the insert cursor's lastrowid — NOT a separate
+            # SELECT LAST_INSERT_ID(), which is connection-scoped and would
+            # break when each statement runs on its own bridge connection.
+            row_id = c.lastrowid
             c.execute("SELECT twilio_auth_token_secret_arn FROM tenants WHERE id=1")
             tok = _secret(c.fetchone()["twilio_auth_token_secret_arn"])
             auth_token = tok.get("auth_token") or tok.get("authToken")
@@ -368,22 +459,12 @@ def test_sms_compliance_and_status():
                     "MessageStatus": "delivered", "From": "+15005550006", "To": PHONE}
             signing = url + "".join(f"{k}{v}" for k, v in sorted(form.items()))
             sig = base64.b64encode(hmac.new(auth_token.encode(), signing.encode(), hashlib.sha1).digest()).decode()
-            import urllib.parse as _up
-            req = urllib.request.Request(url, data=_up.urlencode(form).encode(),
-                headers={"Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": sig}, method="POST")
-            with urllib.request.urlopen(req, timeout=20) as r:
-                assert r.status == 200
+            assert _invoke_admin_webhook(form, sig, row_id) == 200
             c.execute("SELECT status FROM messages WHERE id=%s", (row_id,))
             assert c.fetchone()["status"] == "delivered", "status callback did not update row"
 
             # ── forged signature rejected ────────────────────────────────
-            req = urllib.request.Request(url, data=_up.urlencode(form).encode(),
-                headers={"Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": "forged=="}, method="POST")
-            try:
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    forged_status = r.status
-            except urllib.error.HTTPError as e:
-                forged_status = e.code
+            forged_status = _invoke_admin_webhook(form, "forged==", row_id)
             assert forged_status == 403, f"forged signature not rejected: {forged_status}"
         return "optout suppressed; consent stored; signed callback updates status; forged sig 403"
     finally:

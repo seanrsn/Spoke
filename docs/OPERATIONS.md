@@ -34,6 +34,27 @@ done
   Additive migrations before code deploys; destructive only after code stops
   referencing (see 004 as the model).
 
+## CI test bridge (StagingTestRunner-staging)
+
+GitHub-hosted runners cannot reach RDS — the DB security group is
+IP-allowlisted and runner IPs are dynamic. The integration suite therefore
+routes its SQL through **`StagingTestRunner-staging`**, a tiny Lambda in the
+app's VPC/subnet/SG that runs each query against `bikeshop_staging` and
+refuses any non-staging schema (`bikeshop.`, `information_schema`, `USE`, …).
+The suite calls it with `lambda:InvokeFunction` (which the deploy credentials
+already have); app endpoints are exercised by invoking the `-staging` Lambdas
+directly. Net effect: the suite runs from anywhere with AWS creds — CI, a dev
+box, or inside the VPC.
+
+- This bridge is **stable infra, not app code** — the deploy pipeline does not
+  touch it. Its source lives at `tests/bridge_lambda.py`. To rebuild/update it:
+  package that file with `pymysql` and `aws lambda update-function-code
+  --function-name StagingTestRunner-staging` (same VPC config as
+  `AdminDashboard-staging`; 30s timeout).
+- Run the suite locally against the bridge: `python tests/staging_integration.py`.
+  On a machine that IS on the RDS allowlist, `BIKERY_DIRECT_DB=1` bypasses the
+  bridge and connects to RDS directly.
+
 ## Deploys
 
 - **Everything goes through the gate.** Any push that targets prod
