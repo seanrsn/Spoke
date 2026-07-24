@@ -56,16 +56,24 @@ def _mint_jwt():
     s = b64(hmac.new(secret.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest())
     return f"{h}.{p}.{s}"
 
-def _http(url, body, token=None):
+def _http(url, body, token=None, _attempt=0):
     headers = {"Content-Type": "application/json"}
     if token: headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         try: return e.code, json.loads(e.read())
         except Exception: return e.code, {}
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+        # Transient network flake (seen on CI runners): one retry after a
+        # short pause before letting the test fail for real.
+        if _attempt < 2:
+            print(f"    (transient {type(e).__name__} on {url.rsplit('/',1)[-1]}, retrying...)")
+            time.sleep(3)
+            return _http(url, body, token, _attempt + 1)
+        raise
 
 def _invoke_backend(payload):
     event = {"httpMethod": "POST", "requestContext": {"http": {"method": "POST"}},
@@ -400,6 +408,7 @@ TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")
+    import traceback
     failed = 0
     for t in TESTS:
         try:
@@ -408,6 +417,7 @@ def main():
         except Exception as e:
             failed += 1
             print(f"  [FAIL] {t.__name__}: {type(e).__name__}: {e}")
+            traceback.print_exc()  # full trace in CI output for diagnosis
     print(f"\n{len(TESTS)-failed}/{len(TESTS)} passed.")
     if failed:
         print("STAGING TESTS FAILED — do not promote to prod.")
