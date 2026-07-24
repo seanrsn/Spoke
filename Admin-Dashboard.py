@@ -30,16 +30,64 @@ login_attempts = {}
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 300  # 5 minute lockout after max attempts
 
-# CORS headers for admin dashboard requests
-CORS = {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
-}
+# ── Multi-origin CORS ────────────────────────────────────────────────────────
+# Each tenant can serve its admin pages from its own origin (future
+# {shop}.bluewrenchhq.com). The allow-list is: the env-var origin (prod or
+# staging default) + every active tenant's `allowed_origin`. The request's
+# Origin header is reflected back ONLY if it's in that list; anything else
+# gets the env default (which the browser then correctly blocks).
+_ORIGIN_CACHE = {"origins": None, "loaded_at": 0.0}
+_ORIGIN_TTL_SECONDS = 300
+_REQUEST_ORIGIN = ALLOWED_ORIGIN  # per-invocation; one request per container
+
+
+def _allowed_origins():
+    """Set of origins allowed to call this API (env default + per-tenant)."""
+    now = time.time()
+    if _ORIGIN_CACHE["origins"] is not None and now - _ORIGIN_CACHE["loaded_at"] < _ORIGIN_TTL_SECONDS:
+        return _ORIGIN_CACHE["origins"]
+    origins = {ALLOWED_ORIGIN}
+    try:
+        secret = get_secret()
+        conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                               password=secret["password"], database=secret["database"],
+                               connect_timeout=3)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT allowed_origin FROM tenants WHERE status='active' AND allowed_origin IS NOT NULL AND allowed_origin != ''")
+                for (o,) in cur.fetchall():
+                    origins.add(o.strip().rstrip("/"))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ allowed-origins load failed, using cached/default: {e}")
+        if _ORIGIN_CACHE["origins"]:
+            return _ORIGIN_CACHE["origins"]
+    _ORIGIN_CACHE["origins"] = origins
+    _ORIGIN_CACHE["loaded_at"] = now
+    return origins
+
+
+def resolve_request_origin(event):
+    """Pick the CORS origin to reflect for this request."""
+    global _REQUEST_ORIGIN
+    headers = event.get("headers") or {}
+    origin = (headers.get("origin") or headers.get("Origin") or "").strip().rstrip("/")
+    _REQUEST_ORIGIN = origin if origin and origin in _allowed_origins() else ALLOWED_ORIGIN
+
+
+def cors_headers():
+    return {
+        "Access-Control-Allow-Origin": _REQUEST_ORIGIN,
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Vary": "Origin",
+    }
+
 
 def response(status, body):
     """Helper to format API Gateway response with CORS headers"""
-    return {"statusCode": status, "headers": CORS, "body": json.dumps(body)}
+    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
 
 # ============================================
 # SECRETS MANAGEMENT
@@ -645,16 +693,15 @@ def lambda_handler(event, context):
         event.get('httpMethod')  # Also REST API
     )
     
+    # Resolve which origin to reflect in CORS headers for THIS request
+    # (multi-origin: per-tenant frontends). Must run before any response.
+    resolve_request_origin(event)
+
     # Handle CORS preflight request
     if http_method == 'OPTIONS':
         return {
             "statusCode": 200,
-            "headers": {
-                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-                "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-                "Access-Control-Max-Age": "86400"  # Cache preflight for 24 hours
-            },
+            "headers": {**cors_headers(), "Access-Control-Max-Age": "86400"},
             "body": ""
         }
     
@@ -750,6 +797,36 @@ def lambda_handler(event, context):
         return response(200, {"ok": True, "ts": int(time.time())})
 
     # ============================================
+    # BRANDING ENDPOINT (No auth — login screens)
+    # The login page needs the shop's display name BEFORE anyone logs in
+    # (a shop's staff should see their own shop's name, not Brooklyn
+    # Bikery's). Public by design; exposes nothing but slug -> display name
+    # for active tenants.
+    # ============================================
+    if body.get("action") == "branding":
+        try:
+            slug = (body.get("tenant") or "").strip().lower()
+            secret = get_secret()
+            conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                                   password=secret["password"], database=secret["database"],
+                                   connect_timeout=5, charset="utf8mb4")
+            try:
+                with conn.cursor() as cur:
+                    if slug:
+                        cur.execute("SELECT display_name FROM tenants WHERE slug=%s AND status='active'", (slug,))
+                    else:
+                        cur.execute("SELECT display_name FROM tenants WHERE id=1 AND status='active'")
+                    row = cur.fetchone()
+            finally:
+                conn.close()
+            if not row:
+                return response(404, {"error": "Unknown shop"})
+            return response(200, {"displayName": row[0]})
+        except Exception as e:
+            print(f"❌ branding lookup failed: {e}")
+            return response(500, {"error": "Branding unavailable"})
+
+    # ============================================
     # TWILIO INBOUND WEBHOOK (No auth - public endpoint)
     # Receives incoming SMS from Twilio and stores in database
     # Detects Twilio by checking for MessageSid in form-encoded body
@@ -798,6 +875,47 @@ def lambda_handler(event, context):
             to_number = form_data.get('To', [''])[0]
             message_body = form_data.get('Body', [''])[0]
             twilio_sid = form_data.get('MessageSid', [''])[0]
+            message_status = form_data.get('MessageStatus', [''])[0]
+
+            # ── DELIVERY STATUS CALLBACK ─────────────────────────────────
+            # Twilio POSTs sent/delivered/failed updates for outbound texts
+            # (StatusCallback set by Send-SMS). These have MessageStatus but
+            # no Body. ?msgRowId= identifies the messages row to update.
+            if message_status and not message_body:
+                status_map = {
+                    "queued": "queued", "accepted": "queued", "sending": "sent",
+                    "sent": "sent", "delivered": "delivered",
+                    "undelivered": "failed", "failed": "failed",
+                }
+                new_status = status_map.get(message_status)
+                qs = event.get("queryStringParameters") or {}
+                row_id = qs.get("msgRowId")
+                print(f"📬 Status callback: sid={twilio_sid} status={message_status} rowId={row_id}")
+                if new_status:
+                    try:
+                        secret = get_secret()
+                        conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                                               password=secret["password"], database=secret["database"],
+                                               connect_timeout=5)
+                        cursor = conn.cursor()
+                        if row_id:
+                            cursor.execute(
+                                "UPDATE messages SET status=%s, twilio_sid=%s WHERE id=%s",
+                                (new_status, twilio_sid or None, int(row_id)))
+                        elif twilio_sid:
+                            cursor.execute(
+                                "UPDATE messages SET status=%s WHERE twilio_sid=%s",
+                                (new_status, twilio_sid))
+                        conn.commit()
+                        cursor.close(); conn.close()
+                        print(f"✅ Message status -> {new_status}")
+                    except Exception as st_err:
+                        print(f"⚠️ Status update failed: {st_err}")
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "text/xml"},
+                    "body": "<Response></Response>"
+                }
 
             print(f"📥 Inbound SMS from {from_number}: {message_body[:50]}...")
 
@@ -821,11 +939,20 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            # Resolve tenant for this inbound webhook. tenant_id=1 hardcoded
-            # for step 7. In step 8 (when multi-tenant is real) we'll match
-            # tenants.twilio_from_number against the Twilio webhook's `To`
-            # field to pick the right shop.
-            tenant = get_tenant(1)
+            # Resolve tenant for this inbound webhook by matching the number
+            # the customer texted (`To`) against each shop's Twilio number.
+            # Unmatched -> tenant 1 (Brooklyn Bikery) for legacy behavior.
+            inbound_tid = 1
+            try:
+                cursor.execute(
+                    "SELECT id FROM tenants WHERE twilio_from_number = %s AND status='active'",
+                    (to_number,))
+                trow = cursor.fetchone()
+                if trow:
+                    inbound_tid = trow[0]
+            except Exception as tr_err:
+                print(f"⚠️ Inbound tenant match failed, defaulting to 1: {tr_err}")
+            tenant = get_tenant(inbound_tid)
 
             # Use from_number as the phone (customer's number)
             cursor.execute("""
@@ -833,6 +960,28 @@ def lambda_handler(event, context):
                 VALUES (%s, %s, 'inbound', %s, 'received', %s, %s, %s)
                 ON DUPLICATE KEY UPDATE id=id
             """, (tenant["id"], from_number, message_body, twilio_sid, from_number, to_number))
+
+            # ── STOP / START keyword handling (TCPA opt-out tracking) ────
+            # Twilio blocks STOP'd numbers at the carrier level; we ALSO
+            # record it so the app refuses to queue invoice texts and the
+            # admin can see why. START/UNSTOP re-enables.
+            keyword = message_body.strip().upper()
+            digits10 = "".join(ch for ch in from_number if ch.isdigit())[-10:]
+            try:
+                if keyword in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"):
+                    cursor.execute(
+                        "UPDATE customers SET sms_opted_out=1 WHERE tenant_id=%s AND "
+                        "RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone,'+',''),'-',''),' ',''),'(',''),')',''),10)=%s",
+                        (tenant["id"], digits10))
+                    print(f"⛔ Opt-out recorded for {from_number} (tenant {tenant['id']}, {cursor.rowcount} customer row(s))")
+                elif keyword in ("START", "UNSTOP", "YES"):
+                    cursor.execute(
+                        "UPDATE customers SET sms_opted_out=0 WHERE tenant_id=%s AND "
+                        "RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone,'+',''),'-',''),' ',''),'(',''),')',''),10)=%s",
+                        (tenant["id"], digits10))
+                    print(f"✅ Opt-in restored for {from_number} (tenant {tenant['id']}, {cursor.rowcount} customer row(s))")
+            except Exception as opt_err:
+                print(f"⚠️ Opt-out bookkeeping failed (non-fatal): {opt_err}")
 
             conn.commit()
             cursor.close()
@@ -915,13 +1064,53 @@ def lambda_handler(event, context):
             else:
                 to_phone_normalized = to_phone  # Use as-is if already formatted
 
-            # Upload SMS/MMS job to S3 for processing
+            # Resolve tenant config (creds for the job + from-number for the
+            # history row). Tenant from the verified token.
+            tenant = get_tenant(tid)
+            from_number = tenant["twilio_from_number"]
+
+            # Store outbound message FIRST so its row id can ride along in the
+            # SMS job — Twilio's status callback then updates this exact row
+            # (sent/delivered/failed).
+            message_row_id = None
+            try:
+                secret = get_secret()
+                conn = pymysql.connect(
+                    host=secret["host"],
+                    user=secret["user"],
+                    password=secret["password"],
+                    database=secret["database"],
+                    connect_timeout=5,
+                )
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number)
+                    VALUES (%s, %s, 'outbound', %s, 'queued', %s, %s)
+                """, (tenant["id"], to_phone_normalized, message_body, from_number, to_phone_normalized))
+                message_row_id = cursor.lastrowid
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"📝 Message stored in database for {to_phone_normalized} (row {message_row_id})")
+            except Exception as db_err:
+                # Don't fail the SMS queue if database insert fails
+                print(f"⚠️ Failed to store message in database: {db_err}")
+
+            # Upload SMS/MMS job to S3 for processing. The job carries the
+            # tenant's Twilio credentials (SendSMS is DB-less): previously this
+            # path omitted them, silently sending every shop's dashboard texts
+            # through Brooklyn Bikery's legacy Twilio account.
             s3_client = boto3.client('s3')
             sms_bucket = os.getenv("SMS_BUCKET", "brooklyn-bikery-sms")
 
             sms_job = {
                 "to": to_phone_normalized,
-                "body": message_body
+                "body": message_body,
+                "tenant_id": tenant["id"],
+                "twilio_account_sid": tenant["twilio_account_sid"],
+                "twilio_auth_token_secret_arn": tenant["twilio_auth_token_secret_arn"],
+                "twilio_from_number": from_number,
+                "message_row_id": message_row_id,
             }
 
             # Add media URL for MMS if provided
@@ -939,38 +1128,6 @@ def lambda_handler(event, context):
             )
 
             print(f"✅ {'MMS' if media_url else 'SMS'} queued successfully: {job_key}")
-
-            # Store outbound message in database for conversation history
-            try:
-                secret = get_secret()
-                conn = pymysql.connect(
-                    host=secret["host"],
-                    user=secret["user"],
-                    password=secret["password"],
-                    database=secret["database"],
-                    connect_timeout=5,
-                )
-                cursor = conn.cursor()
-
-                # Read Twilio from-number straight from tenants table column
-                # (no Secrets Manager round-trip needed since it's now a
-                # dedicated DB column as of step 1). Tenant from the verified token.
-                tenant = get_tenant(tid)
-                from_number = tenant["twilio_from_number"]
-
-                cursor.execute("""
-                    INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number)
-                    VALUES (%s, %s, 'outbound', %s, 'queued', %s, %s)
-                """, (tenant["id"], to_phone_normalized, message_body, from_number, to_phone_normalized))
-
-                conn.commit()
-                cursor.close()
-                conn.close()
-                print(f"📝 Message stored in database for {to_phone_normalized}")
-
-            except Exception as db_err:
-                # Don't fail the SMS queue if database insert fails
-                print(f"⚠️ Failed to store message in database: {db_err}")
 
             return response(200, {
                 "message": f"{'MMS' if media_url else 'SMS'} queued successfully",
@@ -1380,6 +1537,183 @@ def lambda_handler(event, context):
             print(f"❌ Error in delete-push-subscription: {str(e)}")
             traceback.print_exc()
             return response(500, {"message": "Internal error"})
+
+    # ============================================
+    # SERVICE CATALOG ENDPOINTS (per-tenant service & price editor)
+    # catalog-list: every catalog row for this tenant (incl. inactive) for
+    #               the dashboard's Services editor.
+    # catalog-save: update one row (name/price/category/active/sort) or add a
+    #               new fixed-price service. Codes and formulas of existing
+    #               rows are immutable (order_services history references
+    #               them); rows are deactivated, never deleted.
+    # ============================================
+    if body.get("action") == "catalog-list":
+        try:
+            secret = get_secret()
+            conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                                   password=secret["password"], database=secret["database"],
+                                   connect_timeout=5, charset="utf8mb4")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, code, display_name, default_price, pricing_formula, "
+                "category, is_active, sort_order FROM service_catalog "
+                "WHERE tenant_id = %s ORDER BY sort_order, id", (tid,))
+            services = [
+                {"id": r[0], "code": r[1], "name": r[2],
+                 "price": float(r[3]) if r[3] is not None else None,
+                 "formula": r[4], "category": r[5] or "other",
+                 "active": bool(r[6]), "sort": r[7]}
+                for r in cursor.fetchall()
+            ]
+            cursor.close(); conn.close()
+            return response(200, {"services": services})
+        except Exception as e:
+            print(f"❌ Error in catalog-list: {e}")
+            traceback.print_exc()
+            return response(500, {"message": "Internal error"})
+
+    if body.get("action") == "catalog-save":
+        try:
+            svc = body.get("service") or {}
+
+            def _bad(msg):
+                return response(400, {"message": msg})
+
+            name = (svc.get("name") or "").strip()
+            category = (svc.get("category") or "other").strip().lower()[:50] or "other"
+            active = 1 if svc.get("active", True) else 0
+            price_raw = svc.get("price")
+            try:
+                price = round(float(price_raw), 2) if price_raw is not None else None
+            except (TypeError, ValueError):
+                return _bad("Price must be a number")
+            try:
+                sort = int(svc.get("sort") or 0)
+            except (TypeError, ValueError):
+                sort = 0
+
+            secret = get_secret()
+            conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                                   password=secret["password"], database=secret["database"],
+                                   connect_timeout=5, charset="utf8mb4")
+            cursor = conn.cursor()
+            try:
+                if svc.get("id"):
+                    # ── Update an existing row (tenant-scoped) ──────────────
+                    sid = int(svc["id"])
+                    cursor.execute(
+                        "SELECT pricing_formula FROM service_catalog "
+                        "WHERE id = %s AND tenant_id = %s", (sid, tid))
+                    row = cursor.fetchone()
+                    if not row:
+                        return response(404, {"message": "Service not found"})
+                    formula = row[0]
+                    if not name:
+                        return _bad("Name is required")
+                    if formula == "fixed" and (price is None or price < 0 or price > 99999):
+                        return _bad("Price must be between 0 and 99999")
+                    cursor.execute(
+                        "UPDATE service_catalog SET display_name=%s, "
+                        "default_price=COALESCE(%s, default_price), category=%s, "
+                        "is_active=%s, sort_order=%s "
+                        "WHERE id=%s AND tenant_id=%s",
+                        (name, price, category, active, sort, sid, tid))
+                else:
+                    # ── Add a new fixed-price service ───────────────────────
+                    if not name:
+                        return _bad("Name is required")
+                    if price is None or price < 0 or price > 99999:
+                        return _bad("Price must be between 0 and 99999")
+                    # Generate a stable, unique, URL/DB-safe code from the name.
+                    base = "".join(c if c.isalnum() else "_" for c in name.lower())
+                    base = "_".join(filter(None, base.split("_")))[:40] or "service"
+                    code = base
+                    n = 2
+                    while True:
+                        cursor.execute(
+                            "SELECT 1 FROM service_catalog WHERE tenant_id=%s AND code=%s",
+                            (tid, code))
+                        if not cursor.fetchone():
+                            break
+                        code = f"{base}_{n}"[:48]
+                        n += 1
+                    cursor.execute(
+                        "INSERT INTO service_catalog (tenant_id, code, display_name, "
+                        "default_price, pricing_formula, category, is_active, sort_order) "
+                        "VALUES (%s, %s, %s, %s, 'fixed', %s, %s, %s)",
+                        (tid, code, name, price, category, active, sort))
+                conn.commit()
+            finally:
+                cursor.close(); conn.close()
+            return response(200, {"message": "Saved"})
+        except Exception as e:
+            print(f"❌ Error in catalog-save: {e}")
+            traceback.print_exc()
+            return response(500, {"message": "Internal error"})
+
+    # ============================================
+    # DATA EXPORT ENDPOINT (per-tenant CSV)
+    # "Your data is yours, exportable" — returns this tenant's customers,
+    # orders (with service line items), and message history as CSV text.
+    # ============================================
+    if body.get("action") == "export-data":
+        try:
+            import csv as _csv
+            import io as _io
+
+            def _rows_to_csv(header, rows):
+                buf = _io.StringIO()
+                w = _csv.writer(buf)
+                w.writerow(header)
+                w.writerows(rows)
+                return buf.getvalue()
+
+            secret = get_secret()
+            conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                                   password=secret["password"], database=secret["database"],
+                                   connect_timeout=5, charset="utf8mb4")
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT id, name, phone, date_created, sms_consent, sms_opted_out "
+                "FROM customers WHERE tenant_id = %s ORDER BY id", (tid,))
+            customers_csv = _rows_to_csv(
+                ["id", "name", "phone", "date_created", "sms_consent", "sms_opted_out"],
+                cursor.fetchall())
+
+            cursor.execute("""
+                SELECT o.id, o.date_of_service, c.name, c.phone, o.bike_description,
+                       o.backend_notes, o.price, o.final_price,
+                       COALESCE((SELECT GROUP_CONCAT(CONCAT(sc.display_name,
+                                CASE WHEN os.quantity > 1 THEN CONCAT(' x', os.quantity) ELSE '' END,
+                                ' ($', os.price_charged, ')') SEPARATOR '; ')
+                         FROM order_services os JOIN service_catalog sc ON sc.id = os.service_catalog_id
+                         WHERE os.order_id = o.id AND os.tenant_id = o.tenant_id), '') AS services
+                FROM orders o JOIN customers c ON c.id = o.customer_id AND c.tenant_id = o.tenant_id
+                WHERE o.tenant_id = %s ORDER BY o.id""", (tid,))
+            orders_csv = _rows_to_csv(
+                ["order_id", "date_of_service", "customer_name", "customer_phone",
+                 "bike_description", "notes", "subtotal", "total_with_tax", "services"],
+                cursor.fetchall())
+
+            cursor.execute(
+                "SELECT id, created_at, direction, phone, status, body "
+                "FROM messages WHERE tenant_id = %s ORDER BY id", (tid,))
+            messages_csv = _rows_to_csv(
+                ["id", "created_at", "direction", "phone", "status", "body"],
+                cursor.fetchall())
+
+            cursor.close(); conn.close()
+            print(f"✅ export-data: tenant {tid} export generated")
+            return response(200, {
+                "customers": customers_csv,
+                "orders": orders_csv,
+                "messages": messages_csv,
+            })
+        except Exception as e:
+            print(f"❌ Error in export-data: {e}")
+            traceback.print_exc()
+            return response(500, {"message": "Export failed"})
 
     # ============================================
     # GET CUSTOMERS ENDPOINT

@@ -319,9 +319,84 @@ def test_send_invoice_flag():
             s3.delete_object(Bucket="brooklyn-bikery-sms-staging", Key=o["Key"])
         conn.close()
 
+def test_sms_compliance_and_status():
+    """Opt-out suppresses invoice texts; consent is recorded on new customers;
+    Twilio status callbacks (signed) update the message row; forged signatures
+    are rejected. Guards the TCPA + delivery-status pipeline."""
+    PHONE = "+15005550099"
+    conn = _db()
+    try:
+        with conn.cursor() as c:
+            # ── consent recording on a new customer ──────────────────────
+            status, out = _invoke_backend({
+                "isNewCustomer": True, "name": "Compliance Test", "phone": PHONE,
+                "smsConsent": False, "serviceCodes": ["front_flat"],
+                "sendInvoice": False, "notes": "", "bikeDescription": ""})
+            assert status == 200, f"new-customer submit failed: {out}"
+            c.execute("SELECT id, sms_consent FROM customers WHERE tenant_id=1 AND phone=%s", (PHONE,))
+            row = c.fetchone()
+            assert row and row["sms_consent"] == 0, f"consent not recorded: {row}"
+            cid = row["id"]
+
+            # ── opt-out suppression ──────────────────────────────────────
+            c.execute("UPDATE customers SET sms_opted_out=1 WHERE id=%s", (cid,))
+            status, out = _invoke_backend({
+                "lookupPhone": PHONE, "isNewCustomer": False,
+                "serviceCodes": ["front_flat"], "sendInvoice": True,
+                "notes": "", "bikeDescription": ""})
+            body = json.loads(out.get("body") or "{}")
+            assert body.get("sms") == "optout", f"expected sms=optout, got {body}"
+
+            # ── status callback: signed 'delivered' updates the row ──────
+            c.execute("INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number) "
+                      "VALUES (1, %s, 'outbound', 'status test', 'queued', '+15005550006', %s)", (PHONE, PHONE))
+            c.execute("SELECT LAST_INSERT_ID() AS id")
+            row_id = c.fetchone()["id"]
+            c.execute("SELECT twilio_auth_token_secret_arn FROM tenants WHERE id=1")
+            tok = _secret(c.fetchone()["twilio_auth_token_secret_arn"])
+            auth_token = tok.get("auth_token") or tok.get("authToken")
+            url = f"{STAGING['admin_api']}/AdminDashboard?msgRowId={row_id}"
+            form = {"MessageSid": "SMstagingtest000000000000000000cafe",
+                    "MessageStatus": "delivered", "From": "+15005550006", "To": PHONE}
+            signing = url + "".join(f"{k}{v}" for k, v in sorted(form.items()))
+            sig = base64.b64encode(hmac.new(auth_token.encode(), signing.encode(), hashlib.sha1).digest()).decode()
+            import urllib.parse as _up
+            req = urllib.request.Request(url, data=_up.urlencode(form).encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": sig}, method="POST")
+            with urllib.request.urlopen(req, timeout=20) as r:
+                assert r.status == 200
+            c.execute("SELECT status FROM messages WHERE id=%s", (row_id,))
+            assert c.fetchone()["status"] == "delivered", "status callback did not update row"
+
+            # ── forged signature rejected ────────────────────────────────
+            req = urllib.request.Request(url, data=_up.urlencode(form).encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": "forged=="}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    forged_status = r.status
+            except urllib.error.HTTPError as e:
+                forged_status = e.code
+            assert forged_status == 403, f"forged signature not rejected: {forged_status}"
+        return "optout suppressed; consent stored; signed callback updates status; forged sig 403"
+    finally:
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM customers WHERE tenant_id=1 AND phone=%s", (PHONE,))
+            r = c.fetchone()
+            if r:
+                cid = r["id"]
+                c.execute("DELETE FROM order_services WHERE tenant_id=1 AND order_id IN (SELECT id FROM orders WHERE customer_id=%s)", (cid,))
+                c.execute("DELETE FROM orders WHERE tenant_id=1 AND customer_id=%s", (cid,))
+                c.execute("DELETE FROM customers WHERE id=%s", (cid,))
+            c.execute("DELETE FROM messages WHERE phone=%s OR to_number=%s", (PHONE, PHONE))
+        s3 = boto3.client("s3", REGION)
+        for o in s3.list_objects_v2(Bucket="brooklyn-bikery-sms-staging", Prefix="sms/").get("Contents", []):
+            s3.delete_object(Bucket="brooklyn-bikery-sms-staging", Key=o["Key"])
+        conn.close()
+
+
 TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
          test_sms_cannot_deliver, test_tenant_isolation, test_login_returns_shop,
-         test_new_customer_flow, test_send_invoice_flag]
+         test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status]
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")

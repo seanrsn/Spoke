@@ -2834,6 +2834,71 @@
       border: 2px solid #ffffff;
     }
 
+    /* Services editor (per-shop service_catalog) */
+    .svc-editor { max-width: 860px; margin: 0 auto; }
+    .svc-editor-card {
+      background: white; border-radius: 18px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.13);
+      padding: 1.5rem; margin-bottom: 2rem;
+    }
+    .svc-editor-head h2 {
+      font-size: 1.25rem; color: #333; display: flex; align-items: center; gap: 0.5rem;
+    }
+    .svc-editor-head h2 [data-lucide] { width: 20px; height: 20px; color: #5b6fcc; }
+    .svc-editor-head p { color: #777; font-size: 0.85rem; margin: 0.4rem 0 1.1rem; }
+    .svc-add-row {
+      display: grid; grid-template-columns: 2fr 100px 1fr auto; gap: 0.5rem;
+      padding-bottom: 1rem; border-bottom: 2px solid #f0f0f0; margin-bottom: 0.4rem;
+    }
+    .svc-add-row input {
+      padding: 0.55rem 0.7rem; border: 2px solid #e0e0e0; border-radius: 10px;
+      font-family: 'Outfit', sans-serif; font-size: 0.85rem;
+    }
+    .svc-add-row input:focus { outline: none; border-color: #5b6fcc; }
+    .svc-add-row button {
+      background: linear-gradient(135deg, #5b6fcc 0%, #6e83f5 100%); color: white;
+      border: none; border-radius: 10px; padding: 0.55rem 1rem; font-weight: 600;
+      cursor: pointer; font-family: 'Outfit', sans-serif; display: inline-flex;
+      align-items: center; gap: 0.3rem;
+    }
+    .svc-add-row button [data-lucide] { width: 15px; height: 15px; }
+    .svc-cat-head {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; color: #999;
+      text-transform: uppercase; padding: 0.9rem 0 0.3rem;
+    }
+    .svc-row {
+      display: grid; grid-template-columns: 2fr 110px 90px auto; gap: 0.5rem;
+      align-items: center; padding: 0.4rem 0; border-bottom: 1px solid #f5f5f5;
+    }
+    .svc-row input[type="text"], .svc-row input[type="number"] {
+      padding: 0.45rem 0.6rem; border: 1.5px solid #e6e6e6; border-radius: 8px;
+      font-family: 'Outfit', sans-serif; font-size: 0.85rem; width: 100%;
+    }
+    .svc-row input:focus { outline: none; border-color: #5b6fcc; }
+    .svc-row input:disabled { background: #fafafa; color: #999; }
+    .svc-row .svc-formula-tag {
+      font-size: 0.68rem; color: #888; background: #f2f4ff; border-radius: 6px;
+      padding: 0.3rem 0.5rem; text-align: center;
+    }
+    .svc-row-actions { display: flex; align-items: center; gap: 0.45rem; justify-content: flex-end; }
+    .svc-row-actions label {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      font-size: 0.75rem; color: #666; cursor: pointer; user-select: none;
+    }
+    .svc-save-btn {
+      background: #eef1ff; color: #5b6fcc; border: none; border-radius: 8px;
+      padding: 0.45rem 0.8rem; font-weight: 600; font-size: 0.78rem;
+      cursor: pointer; font-family: 'Outfit', sans-serif;
+    }
+    .svc-save-btn:hover { background: #5b6fcc; color: white; }
+    .svc-save-btn.saved { background: #d9f7e5; color: #1c9e57; }
+    .svc-row.inactive input[type="text"], .svc-row.inactive input[type="number"] { opacity: 0.45; }
+    @media (max-width: 700px) {
+      .svc-add-row { grid-template-columns: 1fr 90px; }
+      .svc-row { grid-template-columns: 1fr 80px; row-gap: 0.3rem; }
+      .svc-row .svc-formula-tag { display: none; }
+    }
+
     /* Tab panels */
     .tab-panel { display: none; }
     .tab-panel.active {
@@ -3383,6 +3448,7 @@
       <button class="tab-btn active" onclick="switchTab('orders')"><i data-lucide="package"></i><span>Orders</span></button>
       <button class="tab-btn" onclick="switchTab('customers')"><i data-lucide="users"></i><span>Customers</span></button>
       <button class="tab-btn" id="messagesTabBtn" onclick="switchTab('messages')"><i data-lucide="message-circle"></i><span>Messages</span><span class="msg-unread-badge" id="msgUnreadBadge" style="display:none;"></span></button>
+      <button class="tab-btn" onclick="switchTab('services')"><i data-lucide="wrench"></i><span>Services</span></button>
     </div>
   </div>
 
@@ -3442,6 +3508,33 @@
   </div>
 
   <!-- Messages tab -->
+  <!-- Services tab: per-shop service & price editor (service_catalog) -->
+  <div class="tab-panel" id="tab-services">
+    <div class="svc-editor">
+      <div class="svc-editor-card">
+        <div class="svc-editor-head">
+          <h2><i data-lucide="wrench"></i> Services &amp; Prices</h2>
+          <p>These are the services your Service Entry form offers, and the prices it charges. Changes apply to new orders immediately — past orders keep the price they were charged.</p>
+        </div>
+        <div class="svc-add-row">
+          <input type="text" id="svcNewName" placeholder="New service name (e.g., Replace Pedals)" maxlength="100">
+          <input type="number" id="svcNewPrice" placeholder="Price" min="0" step="0.01">
+          <input type="text" id="svcNewCategory" placeholder="Category (optional)" maxlength="50">
+          <button onclick="addService()"><i data-lucide="plus"></i> Add</button>
+        </div>
+        <div id="svcEditorBody"><div class="db-loading">Loading services…</div></div>
+      </div>
+
+      <div class="svc-editor-card">
+        <div class="svc-editor-head">
+          <h2><i data-lucide="download"></i> Your Data</h2>
+          <p>Download everything this shop has in the system — customers, orders with line items, and message history — as CSV files. Your data is yours.</p>
+        </div>
+        <button class="svc-save-btn" id="exportDataBtn" style="padding:0.6rem 1.2rem; font-size:0.85rem;" onclick="exportAllData()">Download CSV export</button>
+      </div>
+    </div>
+  </div>
+
   <div class="tab-panel" id="tab-messages">
     <div class="messages-container">
       <!-- Customer list sidebar -->
@@ -3633,6 +3726,45 @@ async function authFetch(url, options = {}) {
 }
 
 // ============================================
+// TENANT RESOLUTION + LOGIN BRANDING
+// Which shop is this page serving? Priority:
+//   1. ?tenant=<slug> URL param (explicit override / testing)
+//   2. hostname {slug}.bluewrenchhq.com (per-shop domains)
+//   3. null -> Brooklyn Bikery (tenant 1) on brooklynbikery.com hosts
+// ============================================
+function resolveTenantSlug() {
+  const p = new URLSearchParams(window.location.search).get('tenant');
+  if (p) return p.trim().toLowerCase();
+  const m = window.location.hostname.match(/^([a-z0-9-]+)\.bluewrenchhq\.com$/);
+  if (m && !['www', 'app', 'staging'].includes(m[1])) return m[1];
+  return null;
+}
+const TENANT_SLUG = resolveTenantSlug();
+
+// Login-screen branding: a shop's staff should see THEIR shop's name before
+// logging in. Default hosts (no slug) keep the static BB branding — zero
+// network calls, behavior unchanged for Brooklyn Bikery.
+(async function applyTenantBranding() {
+  if (!TENANT_SLUG) return;
+  const h = document.querySelector('.login-box h2');
+  const cacheKey = 'bikeryBrand_' + TENANT_SLUG;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached && h) { h.textContent = cached; document.title = cached + ' - Admin Dashboard'; }
+  try {
+    const res = await fetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'branding', tenant: TENANT_SLUG })
+    });
+    const d = await res.json();
+    if (res.ok && d.displayName) {
+      localStorage.setItem(cacheKey, d.displayName);
+      if (h) h.textContent = d.displayName;
+      document.title = d.displayName + ' - Admin Dashboard';
+    }
+  } catch (e) { /* keep whatever brand is showing */ }
+})();
+
+// ============================================
 // LOGIN
 // ============================================
 document.getElementById('loginForm').addEventListener('submit', async function(e) {
@@ -3641,10 +3773,9 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const errorMsg = document.getElementById('errorMessage');
   const submitBtn = this.querySelector('button[type="submit"]');
 
-  // Multi-tenancy: an optional ?tenant=<slug> in the URL picks which shop to
-  // log into. Absent -> the backend defaults to Brooklyn Bikery (tenant 1), so
-  // the normal login is unchanged. (Forward-compatible with a central login site.)
-  const tenantSlug = new URLSearchParams(window.location.search).get('tenant');
+  // Multi-tenancy: slug from URL param or per-shop hostname. Absent -> the
+  // backend defaults to Brooklyn Bikery (tenant 1), so normal login is unchanged.
+  const tenantSlug = TENANT_SLUG;
 
   submitBtn.disabled = true;
   submitBtn.textContent = 'Logging in...';
@@ -3703,6 +3834,9 @@ function showMainApp() {
 async function preloadAllData() {
   // Load all data in parallel for speed
   const preloads = [
+    // This shop's service catalog (names/prices for order rendering + editor)
+    loadTenantCatalog(),
+
     // Customers (used by Messages and Mass SMS)
     authFetch(`${API_BASE}/AdminDashboard`, {
       method: 'POST',
@@ -3818,48 +3952,150 @@ const QUESTION_TEMPLATE = `Hi! We have a quick question about your bike service.
 
 Thank you!`;
 
-const SERVICE_MAP = {
-  'front_flat': 'Front Flat ($25)',
-  'rear_flat': 'Rear Flat ($25)',
-  'front_flat_ebike': 'Front Flat E-Bike ($45)',
-  'rear_flat_ebike': 'Rear Flat E-Bike ($45)',
-  'front_brake_adj': 'Front Brake Adj ($20)',
-  'rear_brake_adj': 'Rear Brake Adj ($20)',
-  'front_brake_adj_ebike': 'Front Brake Adj E-Bike ($35)',
-  'rear_brake_adj_ebike': 'Rear Brake Adj E-Bike ($35)',
-  'front_replace_vbrake_pads': 'Front Replace V-Brake Pads ($10)',
-  'rear_replace_vbrake_pads': 'Rear Replace V-Brake Pads ($10)',
-  'front_new_vbrake_pads': 'Front New V-Brake Pads ($15)',
-  'rear_new_vbrake_pads': 'Rear New V-Brake Pads ($15)',
-  'front_replace_disc_pads': 'Front Replace Disc Brake Pads ($15)',
-  'rear_replace_disc_pads': 'Rear Replace Disc Brake Pads ($15)',
-  'front_new_disc_pads': 'Front New Disc Brake Pads ($20)',
-  'rear_new_disc_pads': 'Rear New Disc Brake Pads ($20)',
-  'front_hydraulic_brake_bleed': 'Front Hydraulic Brake Bleed ($50)',
-  'rear_hydraulic_brake_bleed': 'Rear Hydraulic Brake Bleed ($50)',
-  'front_derailleur_adj': 'Front Derailleur Adj ($20)',
-  'rear_derailleur_adj': 'Rear Derailleur Adj ($20)',
-  'tune_up': 'Tune-Up ($100)',
-  'replace_cassette': 'Replace Cassette/Freewheel ($15)',
-  'new_bb': 'New Bottom Bracket ($45)',
-  'replace_chain': 'Replace Chain ($15)',
-  'replace_crank_bb': 'Replace Crank/BB ($30)',
-  'replace_front_brake_line': 'Replace Front Brake Line ($25)',
-  'replace_rear_brake_line': 'Replace Rear Brake Line ($25)',
-  'replace_front_gear_line': 'Replace Front Gear Line ($25)',
-  'replace_rear_gear_line': 'Replace Rear Gear Line ($25)',
-  'front_wheel_true': 'Front Wheel Truing ($20)',
-  'rear_wheel_true': 'Rear Wheel Truing ($20)',
-  'replace_front_rotor': 'Replace Front Rotor ($15)',
-  'replace_rear_rotor': 'Replace Rear Rotor ($15)',
-  'front_repack_wheel': 'Front Repack Wheel ($25)',
-  'rear_repack_wheel': 'Rear Repack Wheel ($25)',
-  'repack_headset': 'Repack Headset ($25)',
-  'repack_headset_ebike': 'Repack Headset E-Bike ($35)',
-  'ebike_diagnostic': 'E-Bike Diagnostic ($40)',
-  'bike_assembly': 'Bike Assembly ($100)',
-  'ebike_assembly': 'E-Bike Assembly ($150)'
-};
+// This shop's service catalog (code, name, price, formula, category, active,
+// sort) — loaded from the catalog-list action after login. Replaces the old
+// hardcoded SERVICE_MAP/PRICES/LABELS trio so names and prices always match
+// what the shop actually charges.
+let tenantCatalog = [];
+
+async function loadTenantCatalog() {
+  try {
+    const res = await authFetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'catalog-list' })
+    });
+    const data = await res.json();
+    if (res.ok && Array.isArray(data.services)) {
+      tenantCatalog = data.services;
+      // Re-render whatever is on screen so service names/prices fill in
+      // if the catalog arrived after the first orders render.
+      if (typeof currentResults !== 'undefined' && currentResults.length && typeof displayResults === 'function') {
+        displayResults(currentResults);
+      }
+      if (document.getElementById('svcEditorBody')) renderServicesTab();
+    }
+  } catch (e) { console.error('Catalog load failed:', e); }
+}
+
+// ============================================
+// SERVICES TAB (service & price editor)
+// ============================================
+function svcEsc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderServicesTab() {
+  const host = document.getElementById('svcEditorBody');
+  if (!host) return;
+  if (!tenantCatalog.length) {
+    host.innerHTML = '<div class="db-loading">Loading services…</div>';
+    return;
+  }
+  const cats = [...new Set(tenantCatalog.map(s => s.category || 'other'))];
+  let html = '';
+  for (const cat of cats) {
+    html += `<div class="svc-cat-head">${svcEsc(cat)}</div>`;
+    for (const s of tenantCatalog.filter(x => (x.category || 'other') === cat)) {
+      const priceCell = s.formula === 'fixed'
+        ? `<input type="number" id="svcPrice_${s.id}" value="${s.price ?? ''}" min="0" step="0.01">`
+        : `<span class="svc-formula-tag">${s.formula === 'spoke' ? 'qty-priced' : 'set per order'}</span>`;
+      html += `<div class="svc-row${s.active ? '' : ' inactive'}" id="svcRow_${s.id}">
+        <input type="text" id="svcName_${s.id}" value="${svcEsc(s.name)}" maxlength="100">
+        ${priceCell}
+        <div class="svc-row-actions" style="justify-content:flex-start;">
+          <label><input type="checkbox" id="svcActive_${s.id}" ${s.active ? 'checked' : ''}> Active</label>
+        </div>
+        <div class="svc-row-actions">
+          <button class="svc-save-btn" id="svcSave_${s.id}" onclick="saveService(${s.id})">Save</button>
+        </div>
+      </div>`;
+    }
+  }
+  host.innerHTML = html;
+  if (window.lucide) lucide.createIcons();
+}
+
+async function saveService(id) {
+  const svc = tenantCatalog.find(s => s.id === id);
+  if (!svc) return;
+  const btn = document.getElementById(`svcSave_${id}`);
+  const name = document.getElementById(`svcName_${id}`).value.trim();
+  const priceEl = document.getElementById(`svcPrice_${id}`);
+  const active = document.getElementById(`svcActive_${id}`).checked;
+  const payload = { id, name, category: svc.category, active, sort: svc.sort };
+  if (priceEl) payload.price = parseFloat(priceEl.value);
+  if (!name) return showError('Service name is required');
+  if (priceEl && (isNaN(payload.price) || payload.price < 0)) return showError('Enter a valid price');
+  btn.textContent = '…';
+  try {
+    const res = await authFetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'catalog-save', service: payload })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Save failed');
+    btn.textContent = 'Saved';
+    btn.classList.add('saved');
+    setTimeout(() => { btn.textContent = 'Save'; btn.classList.remove('saved'); }, 1600);
+    await loadTenantCatalog();
+  } catch (e) {
+    btn.textContent = 'Save';
+    showError(e.message || 'Save failed');
+  }
+}
+
+async function exportAllData() {
+  const btn = document.getElementById('exportDataBtn');
+  btn.textContent = 'Preparing…';
+  try {
+    const res = await authFetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'export-data' })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Export failed');
+    const stamp = new Date().toISOString().slice(0, 10);
+    for (const [name, csv] of [['customers', data.customers], ['orders', data.orders], ['messages', data.messages]]) {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name}-${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    }
+    btn.textContent = 'Downloaded';
+    setTimeout(() => { btn.textContent = 'Download CSV export'; }, 2000);
+  } catch (e) {
+    btn.textContent = 'Download CSV export';
+    showError(e.message || 'Export failed');
+  }
+}
+
+async function addService() {
+  const name = document.getElementById('svcNewName').value.trim();
+  const price = parseFloat(document.getElementById('svcNewPrice').value);
+  const category = document.getElementById('svcNewCategory').value.trim() || 'other';
+  if (!name) return showError('Enter a service name');
+  if (isNaN(price) || price < 0) return showError('Enter a valid price');
+  try {
+    const res = await authFetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'catalog-save', service: { name, price, category, active: true, sort: 500 } })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Add failed');
+    document.getElementById('svcNewName').value = '';
+    document.getElementById('svcNewPrice').value = '';
+    document.getElementById('svcNewCategory').value = '';
+    await loadTenantCatalog();
+  } catch (e) {
+    showError(e.message || 'Add failed');
+  }
+}
 
 function getTodayEST() {
   const now = new Date();
@@ -4151,55 +4387,12 @@ function toggleCard(card) { card.classList.toggle('expanded'); }
 function getServicesList(order, includePrices = true) {
   const services = [];
 
-  // Hardcoded prices matching SERVICE_MAP — per-service _price columns were removed with payments table
-  const PRICES = {
-    front_flat: 25, rear_flat: 25,
-    front_flat_ebike: 45, rear_flat_ebike: 45,
-    front_brake_adj: 20, rear_brake_adj: 20,
-    front_brake_adj_ebike: 35, rear_brake_adj_ebike: 35,
-    front_replace_vbrake_pads: 10, rear_replace_vbrake_pads: 10,
-    front_new_vbrake_pads: 15, rear_new_vbrake_pads: 15,
-    front_replace_disc_pads: 15, rear_replace_disc_pads: 15,
-    front_new_disc_pads: 20, rear_new_disc_pads: 20,
-    front_hydraulic_brake_bleed: 50, rear_hydraulic_brake_bleed: 50,
-    front_derailleur_adj: 20, rear_derailleur_adj: 20,
-    tune_up: 100,
-    replace_cassette: 15, new_bb: 45, replace_chain: 15, replace_crank_bb: 30,
-    replace_front_brake_line: 25, replace_rear_brake_line: 25,
-    replace_front_gear_line: 25, replace_rear_gear_line: 25,
-    front_wheel_true: 20, rear_wheel_true: 20,
-    replace_front_rotor: 15, replace_rear_rotor: 15,
-    front_repack_wheel: 25, rear_repack_wheel: 25,
-    repack_headset: 25, repack_headset_ebike: 35,
-    ebike_diagnostic: 40, bike_assembly: 100, ebike_assembly: 150
-  };
-
-  const LABELS = {
-    front_flat: 'Front Flat', rear_flat: 'Rear Flat',
-    front_flat_ebike: 'Front Flat E-Bike', rear_flat_ebike: 'Rear Flat E-Bike',
-    front_brake_adj: 'Front Brake Adj', rear_brake_adj: 'Rear Brake Adj',
-    front_brake_adj_ebike: 'Front Brake Adj E-Bike', rear_brake_adj_ebike: 'Rear Brake Adj E-Bike',
-    front_replace_vbrake_pads: 'Front Replace V-Brake Pads', rear_replace_vbrake_pads: 'Rear Replace V-Brake Pads',
-    front_new_vbrake_pads: 'Front New V-Brake Pads', rear_new_vbrake_pads: 'Rear New V-Brake Pads',
-    front_replace_disc_pads: 'Front Replace Disc Brake Pads', rear_replace_disc_pads: 'Rear Replace Disc Brake Pads',
-    front_new_disc_pads: 'Front New Disc Brake Pads', rear_new_disc_pads: 'Rear New Disc Brake Pads',
-    front_hydraulic_brake_bleed: 'Front Hydraulic Brake Bleed', rear_hydraulic_brake_bleed: 'Rear Hydraulic Brake Bleed',
-    front_derailleur_adj: 'Front Derailleur Adj', rear_derailleur_adj: 'Rear Derailleur Adj',
-    tune_up: 'Tune-Up',
-    replace_cassette: 'Replace Cassette/Freewheel', new_bb: 'New Bottom Bracket',
-    replace_chain: 'Replace Chain', replace_crank_bb: 'Replace Crank/BB',
-    replace_front_brake_line: 'Replace Front Brake Line', replace_rear_brake_line: 'Replace Rear Brake Line',
-    replace_front_gear_line: 'Replace Front Gear Line', replace_rear_gear_line: 'Replace Rear Gear Line',
-    front_wheel_true: 'Front Wheel Truing', rear_wheel_true: 'Rear Wheel Truing',
-    replace_front_rotor: 'Replace Front Rotor', replace_rear_rotor: 'Replace Rear Rotor',
-    front_repack_wheel: 'Front Repack Wheel', rear_repack_wheel: 'Rear Repack Wheel',
-    repack_headset: 'Repack Headset', repack_headset_ebike: 'Repack Headset E-Bike',
-    ebike_diagnostic: 'E-Bike Diagnostic', bike_assembly: 'Bike Assembly', ebike_assembly: 'E-Bike Assembly'
-  };
-
-  for (const [key, label] of Object.entries(LABELS)) {
-    if (order[key] === 1) {
-      services.push(includePrices ? `${label} - $${PRICES[key].toFixed(2)}` : label);
+  // Catalog-driven: names and prices come from THIS shop's service_catalog
+  // (loaded into tenantCatalog after login), not from hardcoded maps.
+  for (const svc of tenantCatalog) {
+    if (svc.formula !== 'fixed') continue;
+    if (order[svc.code] === 1) {
+      services.push(includePrices ? `${svc.name} - $${Number(svc.price).toFixed(2)}` : svc.name);
     }
   }
 
@@ -4243,12 +4436,17 @@ function openBackendForm(orderId) {
   params.set('phone', order.customer_phone || '');
   params.set('bike', order.bike_description || '');
   params.set('notes', order.backend_notes || '');
-  
-  for (const [dbField, displayLabel] of Object.entries(SERVICE_MAP)) {
-    if (order[dbField] === 1) params.append('service', displayLabel);
+
+  // Pre-check this order's services on the form via catalog codes (the form
+  // renders from the same catalog, so codes are the shared language).
+  for (const svc of tenantCatalog) {
+    if (svc.formula === 'fixed' && order[svc.code] === 1) params.append('svc', svc.code);
   }
-  
-  if (order.fix_spoke > 0) params.set('spokes', order.fix_spoke);
+
+  // Spoke counts (fixes a long-standing bug: the old code read a nonexistent
+  // order.fix_spoke and sent a ?spokes= param the form never parsed).
+  if (order.front_fix_spoke > 0) params.set('frontSpokes', order.front_fix_spoke);
+  if (order.rear_fix_spoke > 0) params.set('rearSpokes', order.rear_fix_spoke);
   if (order.custom_service === 1 && order.custom_description) {
     params.set('customDesc', order.custom_description);
     params.set('customPrice', order.custom_service_price || 0);
@@ -4390,6 +4588,10 @@ function switchTab(name) {
     } else {
       fetchDbTables();
     }
+  }
+  if (name === 'services') {
+    renderServicesTab();
+    if (!tenantCatalog.length) loadTenantCatalog();
   }
 }
 
@@ -5615,7 +5817,7 @@ function renderMessages(messages, chatBody, scrollMode = 'bottom') {
 
   chatBody.innerHTML = messages.map(msg => {
     const isOutgoing = msg.direction === 'outbound';
-    const statusIcon = isOutgoing ? (msg.status === 'delivered' ? ' ✓✓' : msg.status === 'sent' ? ' ✓' : '') : '';
+    const statusIcon = isOutgoing ? (msg.status === 'delivered' ? ' ✓✓' : msg.status === 'sent' ? ' ✓' : msg.status === 'failed' ? ' ✗ failed' : '') : '';
     return `<div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">${escapeHtml(msg.body)}<div class="message-time">${fmtMsgTime(msg.created_at)}${statusIcon}</div></div>`;
   }).join('');
 
@@ -5631,7 +5833,7 @@ function renderMessages(messages, chatBody, scrollMode = 'bottom') {
 
 function renderSingleBubble(msg) {
   const isOutgoing = msg.direction === 'outbound';
-  const statusIcon = isOutgoing ? (msg.status === 'delivered' ? ' ✓✓' : msg.status === 'sent' ? ' ✓' : '') : '';
+  const statusIcon = isOutgoing ? (msg.status === 'delivered' ? ' ✓✓' : msg.status === 'sent' ? ' ✓' : msg.status === 'failed' ? ' ✗ failed' : '') : '';
   return `<div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">${escapeHtml(msg.body)}<div class="message-time">${fmtMsgTime(msg.created_at)}${statusIcon}</div></div>`;
 }
 
@@ -5646,7 +5848,7 @@ function patchStatusIcons(chatBody, oldMessages, newMessages) {
       if (oldMsg && oldMsg.status !== newMsg.status) {
         const timeEl = bubbles[bubbleIdx].querySelector('.message-time');
         if (timeEl) {
-          const icon = newMsg.status === 'delivered' ? ' ✓✓' : newMsg.status === 'sent' ? ' ✓' : '';
+          const icon = newMsg.status === 'delivered' ? ' ✓✓' : newMsg.status === 'sent' ? ' ✓' : newMsg.status === 'failed' ? ' ✗ failed' : '';
           timeEl.textContent = fmtMsgTime(newMsg.created_at) + icon;
         }
       }

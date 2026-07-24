@@ -791,6 +791,10 @@
             <label><i data-lucide="phone"></i>Phone:
               <input type="text" id="ncPhone" placeholder="(555) 000-0000" autocomplete="off">
             </label>
+            <label style="display:inline-flex; align-items:center; gap:0.45rem; font-size:0.82rem; font-weight:600; color:#555; cursor:pointer; user-select:none; margin-top:0.35rem;">
+              <input type="checkbox" id="ncSmsConsent" checked style="width:16px; height:16px; accent-color:#22c55e; cursor:pointer;">
+              Customer agrees to receive texts (invoices &amp; updates)
+            </label>
           </div>
         </div>
       </div>
@@ -827,107 +831,12 @@
     </div>
 
     <div class="service-section">
-      <fieldset class="category">
-        <legend><i data-lucide="cable"></i>Flats & Cables</legend>
-        <div class="two-column-grid">
-          <div class="service-column">
-            <div class="column-header">FRONT</div>
-            <label><input type="checkbox" data-service="Front Flat ($25)"> Flat ($25)</label>
-            <label><input type="checkbox" data-service="Front Flat E-Bike ($45)"> Flat E-Bike ($45)</label>
-            <label><input type="checkbox" data-service="Replace Front Brake Line ($25)"> Replace Brake Line ($25)</label>
-            <label><input type="checkbox" data-service="Replace Front Gear Line ($25)"> Replace Gear Line ($25)</label>
-          </div>
-          <div class="service-column">
-            <div class="column-header">REAR</div>
-            <label><input type="checkbox" data-service="Rear Flat ($25)"> Flat ($25)</label>
-            <label><input type="checkbox" data-service="Rear Flat E-Bike ($45)"> Flat E-Bike ($45)</label>
-            <label><input type="checkbox" data-service="Replace Rear Brake Line ($25)"> Replace Brake Line ($25)</label>
-            <label><input type="checkbox" data-service="Replace Rear Gear Line ($25)"> Replace Gear Line ($25)</label>
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset class="category">
-        <legend><i data-lucide="disc"></i>Brake Services</legend>
-        <div class="two-column-grid">
-          <div class="service-column">
-            <div class="column-header">FRONT</div>
-            <label><input type="checkbox" data-service="Front Brake Adj ($20)"> Brake Adj ($20)</label>
-            <label><input type="checkbox" data-service="Front Brake Adj E-Bike ($35)"> Brake Adj E-Bike ($35)</label>
-            <label><input type="checkbox" data-service="Front Replace V-Brake Pads ($10)"> Replace V-Brake Pads ($10)</label>
-            <label><input type="checkbox" data-service="Front New V-Brake Pads ($15)"> New V-Brake Pads ($15)</label>
-            <label><input type="checkbox" data-service="Front Replace Disc Brake Pads ($15)"> Replace Disc Pads ($15)</label>
-            <label><input type="checkbox" data-service="Front New Disc Brake Pads ($20)"> New Disc Pads ($20)</label>
-            <label><input type="checkbox" data-service="Front Hydraulic Brake Bleed ($50)"> Hydraulic Brake Bleed ($50)</label>
-          </div>
-          <div class="service-column">
-            <div class="column-header">REAR</div>
-            <label><input type="checkbox" data-service="Rear Brake Adj ($20)"> Brake Adj ($20)</label>
-            <label><input type="checkbox" data-service="Rear Brake Adj E-Bike ($35)"> Brake Adj E-Bike ($35)</label>
-            <label><input type="checkbox" data-service="Rear Replace V-Brake Pads ($10)"> Replace V-Brake Pads ($10)</label>
-            <label><input type="checkbox" data-service="Rear New V-Brake Pads ($15)"> New V-Brake Pads ($15)</label>
-            <label><input type="checkbox" data-service="Rear Replace Disc Brake Pads ($15)"> Replace Disc Pads ($15)</label>
-            <label><input type="checkbox" data-service="Rear New Disc Brake Pads ($20)"> New Disc Pads ($20)</label>
-            <label><input type="checkbox" data-service="Rear Hydraulic Brake Bleed ($50)"> Hydraulic Brake Bleed ($50)</label>
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset class="category">
-        <legend><i data-lucide="cog"></i>Drivetrain</legend>
-        <label><input type="checkbox" data-service="Tune-Up ($100)"> Tune-Up ($100)</label>
-        <label><input type="checkbox" data-service="Replace Cassette/Freewheel ($15)"> Replace Cassette/Freewheel ($15)</label>
-        <label><input type="checkbox" data-service="New Bottom Bracket ($45)"> New Bottom Bracket ($45)</label>
-        <label><input type="checkbox" data-service="Replace Chain ($15)"> Replace Chain ($15)</label>
-        <label><input type="checkbox" data-service="Replace Crank/BB ($30)"> Replace Crank/BB ($30)</label>
-        <label><input type="checkbox" data-service="Front Derailleur Adj ($20)"> Front Derailleur Adj ($20)</label>
-        <label><input type="checkbox" data-service="Rear Derailleur Adj ($20)"> Rear Derailleur Adj ($20)</label>
-      </fieldset>
-
-      <fieldset class="category">
-        <legend><i data-lucide="disc-3"></i>Wheels & Spokes</legend>
-        <div class="two-column-grid">
-          <div class="service-column">
-            <div class="column-header">FRONT</div>
-            <label><input type="checkbox" data-service="Front Wheel Truing ($20)"> Wheel Truing ($20)</label>
-            <label><input type="checkbox" data-service="Replace Front Rotor ($15)"> Replace Rotor ($15)</label>
-            <label><input type="checkbox" data-service="Front Repack Wheel ($25)"> Repack Wheel ($25)</label>
-            <div class="spoke-input-row">
-              <input type="number" name="frontSpokes" min="0" placeholder="0">
-              <span>Fix Spokes ($35 first, $2 each additional)</span>
-            </div>
-          </div>
-          <div class="service-column">
-            <div class="column-header">REAR</div>
-            <label><input type="checkbox" data-service="Rear Wheel Truing ($20)"> Wheel Truing ($20)</label>
-            <label><input type="checkbox" data-service="Replace Rear Rotor ($15)"> Replace Rotor ($15)</label>
-            <label><input type="checkbox" data-service="Rear Repack Wheel ($25)"> Repack Wheel ($25)</label>
-            <div class="spoke-input-row">
-              <input type="number" name="rearSpokes" min="0" placeholder="0">
-              <span>Fix Spokes ($35 first, $2 each additional)</span>
-            </div>
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset class="category">
-        <legend><i data-lucide="wrench"></i>Other Services</legend>
-        <label><input type="checkbox" data-service="Repack Headset ($25)"> Repack Headset ($25)</label>
-        <label><input type="checkbox" data-service="Repack Headset E-Bike ($35)"> Repack Headset E-Bike ($35)</label>
-        <label><input type="checkbox" data-service="E-Bike Diagnostic ($40)"> E-Bike Diagnostic ($40)</label>
-        <label><input type="checkbox" data-service="Bike Assembly ($100)"> Bike Assembly ($100)</label>
-        <label><input type="checkbox" data-service="E-Bike Assembly ($150)"> E-Bike Assembly ($150)</label>
-      </fieldset>
-
-      <fieldset class="category">
-        <legend><i data-lucide="sparkles"></i>Custom Service</legend>
-        <div class="custom-service-row">
-          <input type="text" name="customDescription" placeholder="Description (e.g., Replace pedals)">
-          <div class="price-input-wrapper">
-            <input type="number" name="customPrice" min="0" step="0.01" placeholder="0.00">
-          </div>
-        </div>
-      </fieldset>
+      <!-- Service checkboxes render here from the shop's service_catalog
+           (getCatalog API). Layout/classes are identical to the old static
+           markup — only the SOURCE changed from hardcoded HTML to data. -->
+      <div id="serviceSections">
+        <div style="text-align:center; color:#888; padding:1.2rem 0;" id="catalogLoading">Loading services…</div>
+      </div>
 
       <fieldset class="category">
         <legend><i data-lucide="file-text"></i>Notes</legend>
@@ -993,6 +902,45 @@ async function authFetch(url, options = {}) {
 }
 
 // ============================================
+// TENANT RESOLUTION + LOGIN BRANDING
+// Which shop is this page serving? Priority:
+//   1. ?tenant=<slug> URL param (explicit override / testing)
+//   2. hostname {slug}.bluewrenchhq.com (per-shop domains)
+//   3. null -> Brooklyn Bikery (tenant 1) on brooklynbikery.com hosts
+// ============================================
+function resolveTenantSlug() {
+  const p = new URLSearchParams(window.location.search).get('tenant');
+  if (p) return p.trim().toLowerCase();
+  const m = window.location.hostname.match(/^([a-z0-9-]+)\.bluewrenchhq\.com$/);
+  if (m && !['www', 'app', 'staging'].includes(m[1])) return m[1];
+  return null;
+}
+const TENANT_SLUG = resolveTenantSlug();
+
+// Login-screen branding: a shop's staff should see THEIR shop's name before
+// logging in, not Brooklyn Bikery's. Default hosts (no slug) keep the static
+// BB branding with zero network calls — behavior unchanged for BB.
+(async function applyTenantBranding() {
+  if (!TENANT_SLUG) return;
+  const h = document.querySelector('.login-box h2');
+  const cacheKey = 'bikeryBrand_' + TENANT_SLUG;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached && h) { h.textContent = cached; document.title = cached + ' - Service Entry'; }
+  try {
+    const res = await fetch(API_ADMIN, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'branding', tenant: TENANT_SLUG })
+    });
+    const d = await res.json();
+    if (res.ok && d.displayName) {
+      localStorage.setItem(cacheKey, d.displayName);
+      if (h) h.textContent = d.displayName;
+      document.title = d.displayName + ' - Service Entry';
+    }
+  } catch (e) { /* keep whatever brand is showing */ }
+})();
+
+// ============================================
 // LOGIN
 // ============================================
 document.getElementById('loginForm').addEventListener('submit', async function(e) {
@@ -1001,9 +949,9 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const errorMsg = document.getElementById('errorMessage');
   const submitBtn = this.querySelector('button[type="submit"]');
 
-  // Multi-tenancy: optional ?tenant=<slug> in the URL selects the shop to log
-  // into. Absent -> backend defaults to Brooklyn Bikery (tenant 1), unchanged.
-  const tenantSlug = new URLSearchParams(window.location.search).get('tenant');
+  // Multi-tenancy: slug from URL param or per-shop hostname. Absent ->
+  // backend defaults to Brooklyn Bikery (tenant 1), unchanged.
+  const tenantSlug = TENANT_SLUG;
 
   submitBtn.disabled = true;
   submitBtn.textContent = 'Logging in...';
@@ -1051,7 +999,131 @@ function showMainApp() {
   const _shopEl = document.getElementById('shopName');
   if (_shopEl) _shopEl.textContent = localStorage.getItem('bikeryShop') || '';
   setMode(true);
-  loadLatestPhone();
+  // Render this shop's service menu BEFORE applying any deep-link params —
+  // the checkboxes/spoke inputs the params target don't exist until then.
+  ensureCatalog().then(loadLatestPhone);
+}
+
+// ============================================
+// SERVICE CATALOG (data-driven service menu)
+// The form renders whatever services THIS shop offers, priced from the
+// shop's service_catalog — no hardcoded menu. Layout mirrors the classic
+// Brooklyn Bikery form: known categories keep their section titles/icons
+// and front/rear split; unknown categories get a generic section.
+// ============================================
+let catalogLoaded = false;
+
+const SECTION_DEFS = [
+  { title: 'Flats & Cables', icon: 'cable',  cats: ['flats', 'cables'],            twoCol: true  },
+  { title: 'Brake Services', icon: 'disc',   cats: ['brakes'],                     twoCol: true  },
+  { title: 'Drivetrain',     icon: 'cog',    cats: ['drivetrain', 'service'],      twoCol: false },
+  { title: 'Wheels & Spokes',icon: 'disc-3', cats: ['wheels'],                     twoCol: true  },
+  { title: 'Other Services', icon: 'wrench', cats: ['headset', 'ebike', 'assembly'], twoCol: false },
+];
+
+function svcSide(code) {
+  // front_x / rear_x prefixes AND x_front_y / x_rear_y infixes both count.
+  if (/^front_|_front_/.test(code)) return 'front';
+  if (/^rear_|_rear_/.test(code)) return 'rear';
+  return null;
+}
+
+function fmtPrice(p) { return (p % 1 === 0) ? `$${p}` : `$${p.toFixed(2)}`; }
+
+function colLabel(svc) {
+  // In a FRONT/REAR column the side word is redundant — strip it like the
+  // classic form did ("Front Flat" -> "Flat" under the FRONT header).
+  return svc.name.replace(/(^|\s)(Front|Rear)\s/, '$1').replace(/^\s+/, '');
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderCatalog(services) {
+  const host = document.getElementById('serviceSections');
+  const fixed  = services.filter(s => s.formula === 'fixed');
+  const spokes = services.filter(s => s.formula === 'spoke');
+  const custom = services.filter(s => s.formula === 'custom');
+
+  const claimed = new Set();
+  const sections = [];
+  for (const def of SECTION_DEFS) {
+    const rows = fixed.filter(s => def.cats.includes(s.category));
+    const spokeRows = spokes.filter(s => def.cats.includes(s.category));
+    rows.forEach(s => claimed.add(s.code));
+    spokeRows.forEach(s => claimed.add(s.code));
+    if (rows.length || spokeRows.length) sections.push({ ...def, rows, spokeRows });
+  }
+  // Any category we don't have a named section for gets a generic one.
+  const leftoverCats = [...new Set(fixed.concat(spokes).filter(s => !claimed.has(s.code)).map(s => s.category))];
+  for (const cat of leftoverCats) {
+    const rows = fixed.filter(s => s.category === cat && !claimed.has(s.code));
+    const spokeRows = spokes.filter(s => s.category === cat && !claimed.has(s.code));
+    const anySided = rows.some(s => svcSide(s.code));
+    sections.push({ title: cat.charAt(0).toUpperCase() + cat.slice(1), icon: 'wrench', twoCol: anySided, rows, spokeRows });
+  }
+
+  const cbox = s => `<label><input type="checkbox" data-code="${esc(s.code)}"> ${esc(colLabel(s))} (${fmtPrice(s.price)})</label>`;
+  const cboxFull = s => `<label><input type="checkbox" data-code="${esc(s.code)}"> ${esc(s.name)} (${fmtPrice(s.price)})</label>`;
+  const spokeRow = s => {
+    const field = s.code === 'front_fix_spoke' ? 'frontSpokes' : (s.code === 'rear_fix_spoke' ? 'rearSpokes' : `qty_${s.code}`);
+    return `<div class="spoke-input-row"><input type="number" name="${esc(field)}" min="0" placeholder="0"><span>Fix Spokes ($35 first, $2 each additional)</span></div>`;
+  };
+
+  let html = '';
+  for (const sec of sections) {
+    html += `<fieldset class="category"><legend><i data-lucide="${esc(sec.icon)}"></i>${esc(sec.title)}</legend>`;
+    if (sec.twoCol) {
+      const front = sec.rows.filter(s => svcSide(s.code) === 'front');
+      const rear  = sec.rows.filter(s => svcSide(s.code) === 'rear');
+      const mid   = sec.rows.filter(s => !svcSide(s.code));
+      const fSpoke = sec.spokeRows.filter(s => svcSide(s.code) === 'front');
+      const rSpoke = sec.spokeRows.filter(s => svcSide(s.code) === 'rear');
+      html += `<div class="two-column-grid">
+        <div class="service-column"><div class="column-header">FRONT</div>${front.map(cbox).join('')}${fSpoke.map(spokeRow).join('')}</div>
+        <div class="service-column"><div class="column-header">REAR</div>${rear.map(cbox).join('')}${rSpoke.map(spokeRow).join('')}</div>
+      </div>`;
+      html += mid.map(cboxFull).join('');
+    } else {
+      html += sec.rows.map(cboxFull).join('');
+      html += sec.spokeRows.map(spokeRow).join('');
+    }
+    html += `</fieldset>`;
+  }
+
+  if (custom.length) {
+    html += `<fieldset class="category"><legend><i data-lucide="sparkles"></i>Custom Service</legend>
+      <div class="custom-service-row">
+        <input type="text" name="customDescription" placeholder="Description (e.g., Replace pedals)">
+        <div class="price-input-wrapper">
+          <input type="number" name="customPrice" min="0" step="0.01" placeholder="0.00">
+        </div>
+      </div></fieldset>`;
+  }
+
+  host.innerHTML = html || '<div style="text-align:center; color:#888; padding:1.2rem 0;">No services configured yet. Add services in the Dashboard.</div>';
+  if (window.lucide) lucide.createIcons();
+}
+
+async function ensureCatalog() {
+  if (catalogLoaded) return;
+  try {
+    const res = await authFetch(API_SERVICES, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getCatalog' })
+    });
+    const data = await res.json();
+    if (res.ok && Array.isArray(data.services)) {
+      renderCatalog(data.services);
+      catalogLoaded = true;
+    } else {
+      throw new Error(data.message || 'Bad catalog response');
+    }
+  } catch (e) {
+    console.error('Catalog load failed:', e);
+    const host = document.getElementById('serviceSections');
+    host.innerHTML = '<div style="text-align:center; color:#c33; padding:1.2rem 0; cursor:pointer;" onclick="catalogLoaded=false; this.textContent=\'Loading services…\'; ensureCatalog();">Failed to load services — tap to retry</div>';
+  }
 }
 
 function logout() {
@@ -1088,13 +1160,22 @@ async function loadLatestPhone() {
   }
   if (urlParams.get('bike')) document.querySelector('input[name="bikeDescription"]').value = urlParams.get('bike');
   if (urlParams.get('notes')) document.getElementById('notes').value = urlParams.get('notes');
-  if (urlParams.get('frontSpokes')) document.querySelector('input[name="frontSpokes"]').value = urlParams.get('frontSpokes');
-  if (urlParams.get('rearSpokes')) document.querySelector('input[name="rearSpokes"]').value = urlParams.get('rearSpokes');
-  if (urlParams.get('customDesc')) document.querySelector('input[name="customDescription"]').value = urlParams.get('customDesc');
-  if (urlParams.get('customPrice')) document.querySelector('input[name="customPrice"]').value = urlParams.get('customPrice');
+  // Spoke/custom inputs are rendered from the catalog and may not exist for
+  // every shop — guard each deep-link param application.
+  const _fs = document.querySelector('input[name="frontSpokes"]');
+  const _rs = document.querySelector('input[name="rearSpokes"]');
+  const _cd = document.querySelector('input[name="customDescription"]');
+  const _cp = document.querySelector('input[name="customPrice"]');
+  if (urlParams.get('frontSpokes') && _fs) _fs.value = urlParams.get('frontSpokes');
+  if (urlParams.get('rearSpokes') && _rs) _rs.value = urlParams.get('rearSpokes');
+  if (urlParams.get('customDesc') && _cd) _cd.value = urlParams.get('customDesc');
+  if (urlParams.get('customPrice') && _cp) _cp.value = urlParams.get('customPrice');
 
-  urlParams.getAll('service').forEach(service => {
-    const cb = document.querySelector(`input[data-service="${service}"]`);
+  // Pre-check services from the dashboard deep-link. New dashboard sends
+  // catalog codes via ?svc=; ?service= (legacy label form) is ignored by
+  // design — admin pages are no-cache so both sides update together.
+  urlParams.getAll('svc').forEach(code => {
+    const cb = document.querySelector(`input[data-code="${CSS.escape(code)}"]`);
     if (cb) cb.checked = true;
   });
 }
@@ -1200,9 +1281,10 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
     lookupPhone: isNewCustomerMode ? '' : document.querySelector('input[name="lookupPhone"]').value,
     orderId: isNewCustomerMode ? null : editOrderId,
     isNewCustomer: isNewCustomerMode,
+    smsConsent: isNewCustomerMode ? (document.getElementById('ncSmsConsent')?.checked ?? true) : undefined,
     sendInvoice: document.getElementById('sendInvoice')?.checked ?? true,
     bikeDescription: document.querySelector('input[name="bikeDescription"]').value.trim(),
-    services: [],
+    serviceCodes: [],
     frontSpokes: 0,
     rearSpokes: 0,
     notes: document.getElementById("notes").value.trim(),
@@ -1210,10 +1292,10 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
     customPrice: 0
   };
 
-  document.querySelectorAll('.category input[type="checkbox"]').forEach(cb => {
-    if (cb.checked && cb.hasAttribute('data-service')) {
-      formData.services.push(cb.getAttribute('data-service'));
-    }
+  // Catalog-driven: checkboxes carry the catalog `code`; the backend prices
+  // each code from the shop's service_catalog (never from the client).
+  document.querySelectorAll('.category input[type="checkbox"][data-code]').forEach(cb => {
+    if (cb.checked) formData.serviceCodes.push(cb.getAttribute('data-code'));
   });
 
   const frontSpokesInput = document.querySelector('input[name="frontSpokes"]');
@@ -1226,8 +1308,11 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
     formData.rearSpokes = parseInt(rearSpokesInput.value);
   }
 
-  const customDesc = document.querySelector('input[name="customDescription"]').value.trim();
-  const customPrice = parseFloat(document.querySelector('input[name="customPrice"]').value) || 0;
+  // Custom-service inputs only exist if this shop's catalog has a custom row.
+  const customDescInput = document.querySelector('input[name="customDescription"]');
+  const customPriceInput = document.querySelector('input[name="customPrice"]');
+  const customDesc = customDescInput ? customDescInput.value.trim() : '';
+  const customPrice = customPriceInput ? (parseFloat(customPriceInput.value) || 0) : 0;
   if (customDesc && customPrice > 0) {
     formData.customDescription = customDesc;
     formData.customPrice = customPrice;
@@ -1248,11 +1333,11 @@ document.getElementById('serviceForm').addEventListener('submit', async (e) => {
       // claim the customer was notified when a text really went out. The shop name
       // is taken from the logged-in tenant (textContent = no HTML injection),
       // replacing the old hardcoded "Brooklyn Bikery".
-      const _notified = result.sms === 'queued';
       const _line = document.getElementById('successLine');
       const _shop = document.getElementById('successShop');
-      if (_line) _line.textContent = _notified
-        ? 'Service entry saved — the customer was texted their invoice.'
+      if (_line) _line.textContent =
+        result.sms === 'queued' ? 'Service entry saved — the customer was texted their invoice.'
+        : result.sms === 'optout' ? 'Service entry saved. This customer has opted out of texts (replied STOP), so no invoice was sent.'
         : 'Service entry saved. The customer was not texted.';
       if (_shop) _shop.textContent = (localStorage.getItem('bikeryShop') || '').trim();
       successOverlay.classList.add('show');

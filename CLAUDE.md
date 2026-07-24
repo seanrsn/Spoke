@@ -41,19 +41,25 @@ HTML files sit side-by-side. Don't go hunting in subdirs.
 
 `neonindex.html` is **unused / .gitignored** — old design draft, ignore it.
 
-### Database
+### Database (multi-tenant, catalog-driven — updated 2026-06)
 
-`schema.sql` — full MySQL schema for the `bikeshop` database. Three tables:
-- `customers` — id, name, phone (unique), date_created
-- `orders` — one row per service visit. **~50 boolean tinyint columns** for individual
-  services (front_flat, rear_flat, tune_up, replace_chain, etc.) plus
-  `front_fix_spoke` / `rear_fix_spoke` as integer counts. Foreign-keyed to customers.
-- `payments` — id matches order id 1:1, parallel column for every service (e.g.
-  `front_flat_price`, `tune_up_price`), plus `price` (subtotal) and `final_price`
-  (with 8.75% NYC tax).
+Migrations in `migrations/` (numbered; staging first, then prod). Key tables:
+- `tenants` — one row per shop: slug, display_name, tax_rate, allowed_origin,
+  Twilio config, admin_password_secret_arn, invoice_footer, status.
+- `customers` — tenant_id, name, phone, date_created, sms_consent(_at),
+  sms_opted_out. Phone unique per tenant.
+- `orders` — metadata only (bike_description, backend_notes, price,
+  final_price). The legacy ~50 service columns were DROPPED (migration 004).
+- `order_services` — the line items: order_id → service_catalog_id, quantity,
+  price_charged, notes. **Sole source of truth for what was done on an order.**
+- `service_catalog` — per-tenant menu: code, display_name, default_price,
+  pricing_formula (fixed|spoke|custom), category, is_active, sort_order.
+- `messages` — per-tenant SMS history; status flows queued→sent→delivered/
+  failed via Twilio status callbacks; twilio_sid recorded.
 
-When the schema changes (new service added), it's a 3-place edit: schema.sql,
-Backend-Form.py (insert/update), Admin-Dashboard.py (search/display).
+**Adding/changing a service is a DATA change, not a code change:** the shop
+edits it in the dashboard's Services tab (or SQL). The service-entry form,
+pricing engine, invoices, and dashboard all render from service_catalog.
 
 ### Junk / generated files (don't edit, don't commit)
 
@@ -62,16 +68,20 @@ snapshot), `pywebpush-layer.zip`, `spoke-repo.tar.gz`. All `.gitignore`d.
 
 ---
 
-## Deploy flow (auto, GitHub Actions)
+## Deploy flow (auto, GitHub Actions — GATED as of 2026-06)
 
-`.github/workflows/deploy.yml` — auto-runs on push to `main` or `claude/**`.
+`.github/workflows/deploy.yml` — auto-runs on push to `main`, `claude/**`, or
+`staging`. Serialized via a concurrency group.
 
-1. **`prepare` job**: if push is on a `claude/*` branch, auto-merges into main and
-   deletes the branch. PRs from `claude/*` get squash-merged.
-2. **`deploy-lambdas` job**: packages each `*.py` file with deps and pushes to its
-   matching Lambda function (mapping in the workflow).
-3. **`deploy-frontend` job**: `aws s3 cp` for `*.html`, `*.js`, `*.json` to
-   `s3://brooklynbikery.com`, then CloudFront invalidation on dist `E3A6Y3SPOMYKVP`.
+1. **`prepare` job**: claude/* pushes auto-merge into main (PRs squash-merge).
+2. **`prod-gate` job (prod targets only)**: deploys the exact same code to the
+   -staging Lambdas + staging site, then runs `tests/staging_integration.py`
+   (9 tests incl. wrong-order regression, tenant isolation, SMS compliance).
+   **Prod jobs run only if this is green.**
+3. **`deploy-lambdas` / `deploy-frontend` jobs**: package `.py` files → Lambdas;
+   sync html/css/js/json → `s3://brooklynbikery.com` + CloudFront invalidation
+   (admin pages ship with no-cache). Staging-branch pushes deploy the staging
+   stack only and run the same test suite.
 
 **Workflow per the user's preference:** Claude on phone (claude.ai) pushes to
 `claude/*` branches → workflow auto-merges + deploys. **Desktop Claude NEVER pushes**
@@ -109,9 +119,10 @@ CORS origin is hardcoded to `https://brooklynbikery.com` via `ALLOWED_ORIGIN` en
   No products, no SKUs, no carts. (That's MachX.)
 - **`*.zip` files at repo root are deploy artifacts** — never edit them by hand.
   They get rebuilt by the workflow.
-- **The DB has no `services` table.** Each service is a column on `orders`. Adding a
-  new service = schema migration + adding columns in three places (see "Database"
-  above).
+- **Services live in `service_catalog` + `order_services` (NOT columns).** The
+  old boolean columns on `orders` are gone (migration 004). Adding a service =
+  a catalog row (dashboard Services tab), zero code changes. Never delete
+  catalog rows — deactivate them (`is_active=0`); order history references them.
 - **Phone numbers are the customer primary key** (unique constraint). Same phone =
   same customer, even with different names.
 - **`Spoke/` folder at root is a stale snapshot** of the old GitHub repo, kept for
@@ -164,11 +175,14 @@ Plan: `docs/superpowers/plans/2026-06-02-staging-environment.md`.
 from `main` (fast path unchanged). Push to the `staging` branch to deploy the staging
 stack.
 
-### ⚠️ Prod Twilio is currently DISARMED
-The S3 → SendSMS notification on `brooklyn-bikery-sms` was removed so testing couldn't
-text customers. **Prod SMS will not send until re-armed.** To re-arm: purge any test
-jobs in `s3://brooklyn-bikery-sms/sms/`, then restore the notification from
-`sms-trigger-backup.json` (local artifact, gitignored). Do this only when ready.
+### Prod Twilio is ARMED (re-armed 2026-06-03)
+Prod SMS is live. Delivery statuses flow back via Twilio status callbacks to
+the Admin API and show as ✓/✓✓/✗ in the dashboard. STOP replies auto-record
+`customers.sms_opted_out` and Backend-Form refuses invoice texts to opted-out
+customers. To disarm in an emergency: remove the S3 → SendSMS notification on
+`brooklyn-bikery-sms` (backup of the config: `sms-trigger-backup.json`, local,
+gitignored). Ops details: `docs/OPERATIONS.md`. Onboarding a new shop's number:
+`docs/A2P-10DLC.md`.
 
 ### Staging resource map
 | Concern | Prod | Staging |

@@ -22,6 +22,32 @@ import boto3, pymysql
 REGION = "us-east-1"
 DB_SECRET = {"prod": "bikeshop-credentials", "staging": "bikeshop-credentials-staging"}
 
+# HTTP APIs whose gateway-level CORS must allow each shop's frontend origin.
+# (HTTP API v2 doesn't support subdomain wildcards, so provisioning appends
+# the exact origin.) admin + backend per environment.
+CORS_APIS = {"prod": ["rqshavktfa", "rysf6hggs6"], "staging": ["dm63xxwajj", "dvo3bho9mj"]}
+
+
+def register_cors_origin(env: str, origin: str):
+    """Append the shop's origin to the gateway CORS allow-lists (idempotent)."""
+    if not origin:
+        return
+    ag = boto3.client("apigatewayv2", region_name=REGION)
+    for api in CORS_APIS[env]:
+        cfg = ag.get_api(ApiId=api)["CorsConfiguration"]
+        origins = cfg.get("AllowOrigins", [])
+        if origin in origins:
+            print(f"  CORS: {origin} already allowed on {api}")
+            continue
+        ag.update_api(ApiId=api, CorsConfiguration={
+            "AllowCredentials": cfg.get("AllowCredentials", False),
+            "AllowHeaders": cfg.get("AllowHeaders", ["content-type", "authorization"]),
+            "AllowMethods": cfg.get("AllowMethods", ["POST", "OPTIONS", "GET"]),
+            "AllowOrigins": origins + [origin],
+            "MaxAge": cfg.get("MaxAge", 3600),
+        })
+        print(f"  CORS: added {origin} to {api}")
+
 def main():
     ap = argparse.ArgumentParser(description="Provision a new tenant/shop")
     ap.add_argument("--slug", required=True, help="URL-safe shop identifier, e.g. 'acme'")
@@ -83,6 +109,11 @@ def main():
             seeded = c.rowcount
 
         conn.commit()
+
+        # 4) allow the shop's frontend origin through gateway CORS
+        if args.allowed_origin:
+            register_cors_origin(args.db, args.allowed_origin.strip().rstrip("/"))
+
         print(f"\n*** Provisioned tenant id={new_id} slug='{slug}' ({seeded} services seeded) ***")
         print(f"  Login: send slug '{slug}' + password at login.")
         if not args.password:

@@ -41,6 +41,13 @@ STAGING_ALLOWED_TWILIO_SIDS = set(
     s.strip() for s in os.environ.get("STAGING_ALLOWED_TWILIO_SIDS", "").split(",") if s.strip()
 )
 
+# Delivery-status callbacks. When set, every outbound message asks Twilio to
+# POST status updates (sent/delivered/failed) to this URL — the AdminDashboard
+# webhook, which updates the message row identified by ?msgRowId=. This Lambda
+# is deliberately DB-less (outside the VPC), so the row id travels via the
+# callback URL instead of a DB write here.
+STATUS_CALLBACK_URL = os.environ.get("STATUS_CALLBACK_URL", "")
+
 # ============================================
 # AWS CLIENTS
 # ============================================
@@ -146,16 +153,22 @@ def send_sms(to: str, body: str, media_url: str | None = None, *, job: dict | No
 
     # Build request fields
     fields = {"To": to, "Body": body}
-    
+
     # Use messaging service if available, otherwise use from number
     if TWILIO_MESSAGING_SERVICE_SID:
         fields["MessagingServiceSid"] = TWILIO_MESSAGING_SERVICE_SID
     else:
         fields["From"] = from_num
-    
+
     # Add media URL for MMS (if provided)
     if media_url:
         fields["MediaUrl"] = media_url
+
+    # Ask Twilio to report delivery status back to the admin webhook, tagged
+    # with the messages-table row this send belongs to.
+    row_id = (job or {}).get("message_row_id")
+    if STATUS_CALLBACK_URL and row_id:
+        fields["StatusCallback"] = f"{STATUS_CALLBACK_URL}?msgRowId={int(row_id)}"
 
     # Send via Twilio API
     return _twilio_post(f"/2010-04-01/Accounts/{account_sid}/Messages.json",
