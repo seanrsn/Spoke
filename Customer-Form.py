@@ -19,13 +19,6 @@ from botocore.config import Config
 REGION = os.getenv("AWS_REGION", "us-east-1")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://brooklynbikery.com")
 
-# CORS headers for cross-origin requests from the website
-CORS = {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "POST,OPTIONS"
-}
-
 # Secrets Manager endpoint (optional override for testing)
 SM_ENDPOINT = os.getenv("SM_ENDPOINT")
 
@@ -35,9 +28,86 @@ BOTO_CFG = Config(read_timeout=3, connect_timeout=3, retries={'max_attempts': 1}
 # In-memory cache for rate limiting (resets when Lambda cold-starts)
 request_cache = {}
 
+# ── Tenant resolution (+ best-effort CORS reflection) ──────────────────────
+# The public intake form is served from each shop's own origin (its
+# {slug}.bluewrenchhq.com, or brooklynbikery.com). We resolve WHICH tenant a
+# submission belongs to from that Origin, so a second shop's customers and
+# orders are created under THAT shop — without this the tenant_id column
+# default (1) would silently misfile every other shop's intake under Brooklyn
+# Bikery. (Browser CORS is enforced by the API Gateway's own CorsConfiguration,
+# which ignores these Lambda headers; provision_tenant.py registers each shop's
+# origin there. The reflected header below is harmless defense-in-depth.)
+_TENANT_ORIGIN_CACHE = {"rows": None, "loaded_at": 0.0}
+# Cache TTL for the tenant→origin map. Prod default 300s; staging sets a small
+# value so integration tests see origin changes without a long wait.
+_TENANT_ORIGIN_TTL = int(os.getenv("TENANT_ORIGIN_TTL", "300"))
+
+# Per-invocation resolved values (one request per warm container at a time).
+_REQUEST_ORIGIN = ALLOWED_ORIGIN
+_REQUEST_TENANT_ID = 1
+
+
+def _tenant_origin_rows():
+    """[(tenant_id, normalized_allowed_origin), ...] for active tenants, cached."""
+    now = datetime.now().timestamp()
+    cached = _TENANT_ORIGIN_CACHE["rows"]
+    if cached is not None and now - _TENANT_ORIGIN_CACHE["loaded_at"] < _TENANT_ORIGIN_TTL:
+        return cached
+    rows = []
+    try:
+        secret = get_secret()
+        conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                               password=secret["password"], database=secret["database"],
+                               port=int(secret.get("port", 3306)), connect_timeout=3)
+        try:
+            with conn.cursor() as cur:
+                # ORDER BY id makes tie-breaks deterministic: if two active
+                # tenants somehow share an origin, the lowest id (the primary
+                # shop) wins rather than a nondeterministic row order.
+                cur.execute("SELECT id, allowed_origin FROM tenants "
+                            "WHERE status='active' AND allowed_origin IS NOT NULL AND allowed_origin != '' "
+                            "ORDER BY id")
+                for tid, origin in cur.fetchall():
+                    rows.append((tid, origin.strip().rstrip("/")))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ tenant-origin load failed, using cached/default: {e}")
+        if cached is not None:
+            return cached
+    _TENANT_ORIGIN_CACHE["rows"] = rows
+    _TENANT_ORIGIN_CACHE["loaded_at"] = now
+    return rows
+
+
+def resolve_request(event):
+    """Set the reflected CORS origin and the tenant for THIS request."""
+    global _REQUEST_ORIGIN, _REQUEST_TENANT_ID
+    headers = event.get("headers") or {}
+    origin = (headers.get("origin") or headers.get("Origin") or "").strip().rstrip("/")
+    rows = _tenant_origin_rows()
+    allowed = {ALLOWED_ORIGIN} | {o for _, o in rows if o}
+    _REQUEST_ORIGIN = origin if origin and origin in allowed else ALLOWED_ORIGIN
+    _REQUEST_TENANT_ID = 1
+    if origin:
+        for tid, o in rows:
+            if o == origin:
+                _REQUEST_TENANT_ID = tid
+                break
+
+
+def cors_headers():
+    return {
+        "Access-Control-Allow-Origin": _REQUEST_ORIGIN,
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "POST,OPTIONS",
+        "Vary": "Origin",
+    }
+
+
 def response(status, body):
     """Helper to format API Gateway response with CORS headers"""
-    return {"statusCode": status, "headers": CORS, "body": json.dumps(body)}
+    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
 
 def get_secret():
     """
@@ -157,10 +227,14 @@ def lambda_handler(event, context):
     8. Return success response
     """
     try:
+        # Resolve the reflected CORS origin + which tenant this submission
+        # belongs to (by Origin) before doing anything else.
+        resolve_request(event)
+
         # Handle CORS preflight OPTIONS request
         if event.get("httpMethod") == "OPTIONS":
             return response(200, {"ok": True})
-        
+
         # Decode request body (may be base64-encoded by API Gateway)
         raw_body = event.get("body", "") or ""
         if event.get("isBase64Encoded"):
@@ -208,34 +282,42 @@ def lambda_handler(event, context):
             print(f"DB connection error: {e}")
             return response(500, {"error": "Service temporarily unavailable"})
         
+        tenant_id = _REQUEST_TENANT_ID
         try:
             with connection.cursor() as cursor:
-                # Check if customer already exists by phone number
-                cursor.execute("SELECT id FROM customers WHERE phone = %s", (validated_data["phone"],))
+                # Check if customer already exists by phone — SCOPED to this
+                # tenant (phone is unique per tenant, not globally), so shops
+                # that happen to share a customer phone stay isolated.
+                cursor.execute(
+                    "SELECT id FROM customers WHERE phone = %s AND tenant_id = %s",
+                    (validated_data["phone"], tenant_id))
                 row = cursor.fetchone()
-                
+
                 if row:
                     # Use existing customer ID
                     customer_id = row[0]
                     # Note: We preserve the original customer name and don't update it
                     # Name updates should only happen through the admin backend
                 else:
-                    # Create new customer record
+                    # Create new customer record. serviceConsent was required
+                    # and validated above, so record SMS consent with a
+                    # timestamp (TCPA record-keeping).
                     cursor.execute("""
-                        INSERT INTO customers (name, phone, date_created)
-                        VALUES (%s, %s, %s)
+                        INSERT INTO customers (tenant_id, name, phone, date_created, sms_consent, sms_consent_at)
+                        VALUES (%s, %s, %s, %s, 1, NOW())
                     """, (
+                        tenant_id,
                         validated_data["name"],
                         validated_data["phone"],
                         today
                     ))
                     customer_id = cursor.lastrowid
-                
-                # Create new order for this service request
+
+                # Create new order for this service request (tenant-scoped)
                 cursor.execute("""
-                    INSERT INTO orders (customer_id, date_of_service, customer_notes)
-                    VALUES (%s, %s, %s)
-                """, (customer_id, today, validated_data["notes"]))
+                    INSERT INTO orders (tenant_id, customer_id, date_of_service, customer_notes)
+                    VALUES (%s, %s, %s, %s)
+                """, (tenant_id, customer_id, today, validated_data["notes"]))
                 order_id = cursor.lastrowid
 
                 # Commit transaction

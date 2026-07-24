@@ -28,6 +28,7 @@ STAGING = {
     "admin_api":   "https://dm63xxwajj.execute-api.us-east-1.amazonaws.com/stage",
     "admin_fn":    "AdminDashboard-staging",
     "backend_fn":  "SubmitBackendForm-staging",
+    "customer_fn": "SubmitCustomerForm-staging",
     "sendsms_fn":  "SendSMS-staging",
     "db_secret":   "bikeshop-credentials-staging",
     "admin_pw_secret": "bikery-admin-password-staging",
@@ -483,9 +484,71 @@ def test_sms_compliance_and_status():
         conn.close()
 
 
+def test_public_intake_tenant_routing():
+    """The PUBLIC intake form must file each submission under the tenant that
+    owns the request Origin — not always tenant 1. Guards the multi-tenant
+    correctness of the customer-facing form (a second shop's customers must
+    not land under Brooklyn Bikery). Also checks SMS consent is recorded."""
+    import urllib.parse as _up
+    conn = _db()
+    T2_ORIGIN = "https://itest-tenant2.example.com"
+    BB_ORIGIN = "https://staging.brooklynbikery.com"
+    P2, P1 = "5005559111", "5005559112"
+
+    def intake(origin, name, phone):
+        form = _up.urlencode({"name": name, "phone": phone, "notes": "itest routing",
+                              "serviceConsent": "on", "marketingConsent": "on"})
+        event = {"httpMethod": "POST", "requestContext": {"http": {"method": "POST"}},
+                 "headers": {"origin": origin, "content-type": "application/x-www-form-urlencoded"},
+                 "body": form, "isBase64Encoded": False}
+        r = lam.invoke(FunctionName=STAGING["customer_fn"], Payload=json.dumps(event).encode())
+        out = json.loads(r["Payload"].read())
+        return out.get("statusCode")
+
+    def filed_under(phone):
+        with conn.cursor() as c:
+            c.execute("SELECT id, tenant_id, sms_consent FROM customers WHERE phone=%s", (phone,))
+            cu = c.fetchone()
+            if not cu: return None
+            c.execute("SELECT tenant_id FROM orders WHERE customer_id=%s ORDER BY id DESC LIMIT 1", (cu["id"],))
+            o = c.fetchone()
+            return {"cust_tenant": cu["tenant_id"], "order_tenant": o["tenant_id"] if o else None,
+                    "sms_consent": cu["sms_consent"]}
+
+    def scrub():
+        with conn.cursor() as c:
+            for p in (P1, P2):
+                c.execute("DELETE o FROM orders o JOIN customers cu ON cu.id=o.customer_id WHERE cu.phone=%s", (p,))
+                c.execute("DELETE FROM customers WHERE phone=%s", (p,))
+
+    with conn.cursor() as c:
+        c.execute("SELECT allowed_origin FROM tenants WHERE id=2")
+        old_origin = c.fetchone()["allowed_origin"]
+    try:
+        scrub()
+        with conn.cursor() as c:
+            c.execute("UPDATE tenants SET allowed_origin=%s WHERE id=2", (T2_ORIGIN,))
+        # staging TENANT_ORIGIN_TTL is 2s; wait past it so the Lambda reloads.
+        time.sleep(4)
+
+        assert intake(T2_ORIGIN, "Route T2", P2) == 200, "tenant-2 intake failed"
+        assert intake(BB_ORIGIN, "Route BB", P1) == 200, "tenant-1 intake failed"
+
+        t2 = filed_under(P2); bb = filed_under(P1)
+        assert t2 == {"cust_tenant": 2, "order_tenant": 2, "sms_consent": 1}, f"tenant-2 misrouted: {t2}"
+        assert bb == {"cust_tenant": 1, "order_tenant": 1, "sms_consent": 1}, f"tenant-1 misrouted: {bb}"
+        return "intake routes by Origin: shop-2 origin -> tenant 2, BB origin -> tenant 1; consent recorded"
+    finally:
+        scrub()
+        with conn.cursor() as c:
+            c.execute("UPDATE tenants SET allowed_origin=%s WHERE id=2", (old_origin,))
+        conn.close()
+
+
 TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
          test_sms_cannot_deliver, test_tenant_isolation, test_login_returns_shop,
-         test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status]
+         test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status,
+         test_public_intake_tenant_routing]
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")

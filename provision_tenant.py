@@ -23,9 +23,15 @@ REGION = "us-east-1"
 DB_SECRET = {"prod": "bikeshop-credentials", "staging": "bikeshop-credentials-staging"}
 
 # HTTP APIs whose gateway-level CORS must allow each shop's frontend origin.
-# (HTTP API v2 doesn't support subdomain wildcards, so provisioning appends
-# the exact origin.) admin + backend per environment.
-CORS_APIS = {"prod": ["rqshavktfa", "rysf6hggs6"], "staging": ["dm63xxwajj", "dvo3bho9mj"]}
+# API Gateway v2 manages CORS itself and IGNORES the Lambda's CORS headers, so
+# a new shop's origin MUST be registered here or its browser calls are blocked
+# at the gateway. (v2 doesn't support subdomain wildcards, so we append the
+# exact origin.) All THREE APIs: admin, backend, AND the public customer intake
+# form — omitting the customer API would CORS-block a new shop's intake page.
+CORS_APIS = {
+    "prod":    ["rqshavktfa", "rysf6hggs6", "pp7s8cgqke"],
+    "staging": ["dm63xxwajj", "dvo3bho9mj", "0nevdp3exi"],
+}
 
 
 def register_cors_origin(env: str, origin: str):
