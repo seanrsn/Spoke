@@ -191,7 +191,21 @@ jobs:
         run: pip install boto3 pymysql==1.1.1 --quiet
 
       - name: Run integration tests against staging
-        run: python tests/staging_integration.py
+        run: |
+          set -o pipefail
+          python tests/staging_integration.py 2>&1 | tee gate-test-output.txt
+
+      - name: Publish gate output for diagnosis (always)
+        if: always()
+        run: |
+          # CI job logs need repo admin to read; the staging bucket doesn't.
+          # Drop the test output there so failures are diagnosable from the CLI.
+          aws s3 cp gate-test-output.txt \
+            "s3://bikery-staging-site/ci-debug/gate-$(date +%Y%m%d-%H%M%S).txt" \
+            --content-type text/plain --region "$AWS_REGION" || true
+          aws s3 cp gate-test-output.txt \
+            "s3://bikery-staging-site/ci-debug/latest.txt" \
+            --content-type text/plain --region "$AWS_REGION" || true
 
   deploy-lambdas:
     name: Deploy Lambda functions
