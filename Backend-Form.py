@@ -532,7 +532,7 @@ def lambda_handler(event, context):
             if body.get("action") == "getCatalog":
                 cursor.execute(
                     "SELECT code, display_name, default_price, pricing_formula, "
-                    "category, sort_order FROM service_catalog "
+                    "category, sort_order, additional_unit_price FROM service_catalog "
                     "WHERE tenant_id = %s AND is_active = 1 ORDER BY sort_order, id",
                     (tid,),
                 )
@@ -544,6 +544,7 @@ def lambda_handler(event, context):
                         "formula": r[3],
                         "category": r[4] or "other",
                         "sort": r[5],
+                        "add_price": float(r[6]) if r[6] is not None else None,
                     }
                     for r in cursor.fetchall()
                 ]
@@ -680,14 +681,15 @@ def lambda_handler(event, context):
             # are translated to codes — but even then the PRICE is the
             # catalog's, never the label's.
             cursor.execute(
-                "SELECT id, code, display_name, default_price, pricing_formula "
+                "SELECT id, code, display_name, default_price, pricing_formula, additional_unit_price "
                 "FROM service_catalog WHERE tenant_id = %s AND is_active = 1",
                 (tid,),
             )
             catalog = {
                 r[1]: {"id": r[0], "code": r[1], "name": r[2],
                        "price": float(r[3]) if r[3] is not None else None,
-                       "formula": r[4]}
+                       "formula": r[4],
+                       "add_price": float(r[5]) if r[5] is not None else None}
                 for r in cursor.fetchall()
             }
 
@@ -721,14 +723,21 @@ def lambda_handler(event, context):
                 # line item would under-charge without anyone noticing.
                 return response(400, {"message": f"Unknown service(s): {', '.join(sorted(unknown_codes)[:5])}. Reload the form and try again."})
 
-            # Spoke repairs (quantity-based: $33 base + $2 per spoke). Only
-            # rendered/accepted for tenants whose catalog has spoke services.
+            # Spoke repairs (quantity-based). Now data-driven per shop, not a
+            # hardcoded 33+2*qty: the line total is
+            #   first-spoke price + each-additional * (qty - 1)
+            # read from the catalog row (default_price / additional_unit_price).
+            # Falls back to Brooklyn Bikery's historical $35 first / $2 each if a
+            # row predates migration 007, so behavior is unchanged for BB.
             for qty, code in ((front_spokes, "front_fix_spoke"), (rear_spokes, "rear_fix_spoke")):
                 if qty > 0 and code in catalog:
                     svc = catalog[code]
+                    first = svc["price"] if svc["price"] is not None else 35.0
+                    each = svc["add_price"] if svc.get("add_price") is not None else 2.0
+                    spoke_total = round(first + each * (qty - 1), 2)
                     line_items.append({
                         "catalog_id": svc["id"], "code": code, "name": svc["name"],
-                        "quantity": qty, "price": 33 + 2 * qty, "formula": "spoke",
+                        "quantity": qty, "price": spoke_total, "formula": "spoke",
                         "notes": None,
                     })
 

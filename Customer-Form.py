@@ -48,7 +48,7 @@ _REQUEST_TENANT_ID = 1
 
 
 def _tenant_origin_rows():
-    """[(tenant_id, normalized_allowed_origin), ...] for active tenants, cached."""
+    """[(tenant_id, normalized_allowed_origin, slug), ...] for active tenants, cached."""
     now = datetime.now().timestamp()
     cached = _TENANT_ORIGIN_CACHE["rows"]
     if cached is not None and now - _TENANT_ORIGIN_CACHE["loaded_at"] < _TENANT_ORIGIN_TTL:
@@ -64,15 +64,14 @@ def _tenant_origin_rows():
                 # ORDER BY id makes tie-breaks deterministic: if two active
                 # tenants somehow share an origin, the lowest id (the primary
                 # shop) wins rather than a nondeterministic row order.
-                cur.execute("SELECT id, allowed_origin FROM tenants "
-                            "WHERE status='active' AND allowed_origin IS NOT NULL AND allowed_origin != '' "
-                            "ORDER BY id")
-                for tid, origin in cur.fetchall():
-                    rows.append((tid, origin.strip().rstrip("/")))
+                cur.execute("SELECT id, allowed_origin, slug FROM tenants "
+                            "WHERE status='active' ORDER BY id")
+                for tid, origin, slug in cur.fetchall():
+                    rows.append((tid, (origin or "").strip().rstrip("/"), (slug or "").strip().lower()))
         finally:
             conn.close()
     except Exception as e:
-        print(f"⚠️ tenant-origin load failed, using cached/default: {e}")
+        print(f"⚠️ tenant load failed, using cached/default: {e}")
         if cached is not None:
             return cached
     _TENANT_ORIGIN_CACHE["rows"] = rows
@@ -81,19 +80,31 @@ def _tenant_origin_rows():
 
 
 def resolve_request(event):
-    """Set the reflected CORS origin and the tenant for THIS request."""
+    """Set the reflected CORS origin and the tenant for THIS request (by Origin)."""
     global _REQUEST_ORIGIN, _REQUEST_TENANT_ID
     headers = event.get("headers") or {}
     origin = (headers.get("origin") or headers.get("Origin") or "").strip().rstrip("/")
     rows = _tenant_origin_rows()
-    allowed = {ALLOWED_ORIGIN} | {o for _, o in rows if o}
+    allowed = {ALLOWED_ORIGIN} | {o for _, o, _ in rows if o}
     _REQUEST_ORIGIN = origin if origin and origin in allowed else ALLOWED_ORIGIN
     _REQUEST_TENANT_ID = 1
     if origin:
-        for tid, o in rows:
-            if o == origin:
+        for tid, o, _slug in rows:
+            if o and o == origin:
                 _REQUEST_TENANT_ID = tid
                 break
+
+
+def tenant_id_for_slug(slug):
+    """Resolve an active tenant id from a shop slug (the ?tenant= override on the
+    shared host). Returns None if the slug matches no active tenant."""
+    slug = (slug or "").strip().lower()
+    if not slug:
+        return None
+    for tid, _o, s in _tenant_origin_rows():
+        if s and s == slug:
+            return tid
+    return None
 
 
 def cors_headers():
@@ -282,7 +293,16 @@ def lambda_handler(event, context):
             print(f"DB connection error: {e}")
             return response(500, {"error": "Service temporarily unavailable"})
         
+        # Tenant precedence: the Origin (browser-enforced, primary path) wins;
+        # if the Origin didn't pin a specific shop (shared host -> tenant 1), a
+        # ?tenant= slug in the form may select an active shop. The slug is public
+        # (it's in the shop's URL) and submitting intake to a shop is not
+        # sensitive, so this is safe.
         tenant_id = _REQUEST_TENANT_ID
+        if tenant_id == 1:
+            slug_tid = tenant_id_for_slug(data.get("tenant"))
+            if slug_tid:
+                tenant_id = slug_tid
         try:
             with connection.cursor() as cursor:
                 # Check if customer already exists by phone — SCOPED to this

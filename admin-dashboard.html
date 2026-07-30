@@ -2846,6 +2846,14 @@
     }
     .svc-editor-head h2 [data-lucide] { width: 20px; height: 20px; color: #5b6fcc; }
     .svc-editor-head p { color: #777; font-size: 0.85rem; margin: 0.4rem 0 1.1rem; }
+    .pw-change { display: flex; flex-direction: column; gap: 0.6rem; max-width: 360px; }
+    .pw-change input {
+      padding: 0.6rem 0.75rem; border: 1px solid #d8dce6; border-radius: 10px;
+      font-size: 0.9rem; font-family: inherit; outline: none;
+    }
+    .pw-change input:focus { border-color: #5b6fcc; box-shadow: 0 0 0 3px rgba(91,111,204,0.12); }
+    .pw-msg { font-size: 0.82rem; min-height: 1em; }
+    .pw-msg.ok { color: #16a34a; } .pw-msg.err { color: #dc2626; }
     .svc-add-row {
       display: grid; grid-template-columns: 2fr 100px 1fr auto; gap: 0.5rem;
       padding-bottom: 1rem; border-bottom: 2px solid #f0f0f0; margin-bottom: 0.4rem;
@@ -2867,7 +2875,7 @@
       text-transform: uppercase; padding: 0.9rem 0 0.3rem;
     }
     .svc-row {
-      display: grid; grid-template-columns: 2fr 110px 90px auto; gap: 0.5rem;
+      display: grid; grid-template-columns: 2fr 150px 90px auto; gap: 0.5rem;
       align-items: center; padding: 0.4rem 0; border-bottom: 1px solid #f5f5f5;
     }
     .svc-row input[type="text"], .svc-row input[type="number"] {
@@ -2880,6 +2888,13 @@
       font-size: 0.68rem; color: #888; background: #f2f4ff; border-radius: 6px;
       padding: 0.3rem 0.5rem; text-align: center;
     }
+    .svc-spoke-prices { display: flex; gap: 0.4rem; }
+    .svc-spoke-prices label {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+      font-size: 0.6rem; color: #999; text-transform: uppercase; letter-spacing: 0.02em;
+      flex: 1; min-width: 0;
+    }
+    .svc-spoke-prices input { width: 100%; min-width: 0; }
     .svc-row-actions { display: flex; align-items: center; gap: 0.45rem; justify-content: flex-end; }
     .svc-row-actions label {
       display: inline-flex; align-items: center; gap: 0.25rem;
@@ -3532,6 +3547,20 @@
         </div>
         <button class="svc-save-btn" id="exportDataBtn" style="padding:0.6rem 1.2rem; font-size:0.85rem;" onclick="exportAllData()">Download CSV export</button>
       </div>
+
+      <div class="svc-editor-card">
+        <div class="svc-editor-head">
+          <h2><i data-lucide="lock"></i> Change Password</h2>
+          <p>Update this shop's admin password. You'll need your current password.</p>
+        </div>
+        <div class="pw-change">
+          <input type="password" id="pwCurrent" placeholder="Current password" autocomplete="current-password">
+          <input type="password" id="pwNew" placeholder="New password (min 8 characters)" autocomplete="new-password">
+          <input type="password" id="pwConfirm" placeholder="Confirm new password" autocomplete="new-password">
+          <div id="pwMsg" class="pw-msg"></div>
+          <button class="svc-save-btn" id="pwSaveBtn" style="padding:0.6rem 1.2rem; font-size:0.85rem;" onclick="changePassword()">Update password</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -3997,7 +4026,12 @@ function renderServicesTab() {
     for (const s of tenantCatalog.filter(x => (x.category || 'other') === cat)) {
       const priceCell = s.formula === 'fixed'
         ? `<input type="number" id="svcPrice_${s.id}" value="${s.price ?? ''}" min="0" step="0.01">`
-        : `<span class="svc-formula-tag">${s.formula === 'spoke' ? 'qty-priced' : 'set per order'}</span>`;
+        : s.formula === 'spoke'
+          ? `<div class="svc-spoke-prices">
+               <label title="Price of the first spoke">1st <input type="number" id="svcPrice_${s.id}" value="${s.price ?? ''}" min="0" step="0.01"></label>
+               <label title="Price of each additional spoke">+ea <input type="number" id="svcAddPrice_${s.id}" value="${s.add_price ?? ''}" min="0" step="0.01"></label>
+             </div>`
+          : `<span class="svc-formula-tag">set per order</span>`;
       html += `<div class="svc-row${s.active ? '' : ' inactive'}" id="svcRow_${s.id}">
         <input type="text" id="svcName_${s.id}" value="${svcEsc(s.name)}" maxlength="100">
         ${priceCell}
@@ -4023,8 +4057,11 @@ async function saveService(id) {
   const active = document.getElementById(`svcActive_${id}`).checked;
   const payload = { id, name, category: svc.category, active, sort: svc.sort };
   if (priceEl) payload.price = parseFloat(priceEl.value);
+  const addEl = document.getElementById(`svcAddPrice_${id}`);
+  if (addEl) payload.add_price = parseFloat(addEl.value);
   if (!name) return showError('Service name is required');
   if (priceEl && (isNaN(payload.price) || payload.price < 0)) return showError('Enter a valid price');
+  if (addEl && (isNaN(payload.add_price) || payload.add_price < 0)) return showError('Enter a valid additional-spoke price');
   btn.textContent = '…';
   try {
     const res = await authFetch(`${API_BASE}/AdminDashboard`, {
@@ -4041,6 +4078,38 @@ async function saveService(id) {
   } catch (e) {
     btn.textContent = 'Save';
     showError(e.message || 'Save failed');
+  }
+}
+
+async function changePassword() {
+  const btn = document.getElementById('pwSaveBtn');
+  const msg = document.getElementById('pwMsg');
+  const cur = document.getElementById('pwCurrent').value;
+  const nw = document.getElementById('pwNew').value;
+  const cf = document.getElementById('pwConfirm').value;
+  msg.className = 'pw-msg';
+  const fail = (t) => { msg.textContent = t; msg.classList.add('err'); };
+  if (!cur || !nw) return fail('Fill in your current and new password.');
+  if (nw.length < 8) return fail('New password must be at least 8 characters.');
+  if (nw !== cf) return fail('New passwords do not match.');
+  if (nw === cur) return fail('New password must be different from the current one.');
+  btn.textContent = 'Updating…'; btn.disabled = true;
+  try {
+    const res = await authFetch(`${API_BASE}/AdminDashboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'change-password', currentPassword: cur, newPassword: nw })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not update password');
+    msg.textContent = 'Password updated.'; msg.classList.add('ok');
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+  } catch (e) {
+    fail(e.message || 'Could not update password');
+  } finally {
+    btn.textContent = 'Update password'; btn.disabled = false;
   }
 }
 
