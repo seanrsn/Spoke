@@ -1029,7 +1029,56 @@ def lambda_handler(event, context):
     # resolve to 1 (Brooklyn Bikery) — unchanged behavior.
     tid = resolve_tenant_id(payload=payload)
     print(f"✅ Authenticated admin request (tenant {tid})")
-    
+
+    # ============================================
+    # CHANGE PASSWORD ENDPOINT (authenticated, self-service)
+    # Lets a logged-in shop rotate its OWN admin password without us running
+    # a CLI command — required to sell to shops we don't operate for. Requires
+    # the current password too, so a stolen token alone can't lock the shop
+    # out. Rotates the tenant's admin-password secret in place.
+    # ============================================
+    if body.get("action") == "change-password":
+        # Rate-limit by IP as well (brute-forcing the current password).
+        allowed, rl_msg = check_login_rate_limit(ip_address)
+        if not allowed:
+            return response(429, {"error": rl_msg})
+        current = body.get("currentPassword", "") or ""
+        new_pw = body.get("newPassword", "") or ""
+
+        stored = get_admin_password(tid)
+        if stored is None:
+            return response(500, {"error": "Authentication service unavailable"})
+        if not hmac.compare_digest(current.encode("utf-8"), stored.encode("utf-8")):
+            record_login_attempt(ip_address, False)
+            print(f"❌ change-password: wrong current password (tenant {tid}, ip {ip_address})")
+            # 403, NOT 401: the session/JWT is valid — it's the current-password
+            # field that's wrong. A 401 would make the frontend's authFetch treat
+            # it as an expired session and log the admin out mid-change.
+            return response(403, {"error": "Current password is incorrect"})
+
+        # New-password policy: >= 8 chars, not identical to the old one.
+        if len(new_pw) < 8:
+            return response(400, {"error": "New password must be at least 8 characters"})
+        if len(new_pw) > 200:
+            return response(400, {"error": "New password is too long"})
+        if hmac.compare_digest(new_pw.encode("utf-8"), stored.encode("utf-8")):
+            return response(400, {"error": "New password must be different from the current one"})
+
+        try:
+            tenant = get_tenant(tid)
+            sm = boto3.client("secretsmanager", region_name=REGION)
+            sm.put_secret_value(
+                SecretId=tenant["admin_password_secret_arn"],
+                SecretString=json.dumps({"password": new_pw}),
+            )
+            record_login_attempt(ip_address, True)  # reset the fail counter
+            print(f"🔑 Admin password rotated for tenant {tid}")
+            return response(200, {"message": "Password updated"})
+        except Exception as e:
+            print(f"❌ change-password failed for tenant {tid}: {e}")
+            traceback.print_exc()
+            return response(500, {"error": "Could not update password"})
+
     # ============================================
     # SEND SMS ENDPOINT
     # Queues SMS message to S3 for processing by separate Lambda
@@ -1556,13 +1605,14 @@ def lambda_handler(event, context):
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, code, display_name, default_price, pricing_formula, "
-                "category, is_active, sort_order FROM service_catalog "
+                "category, is_active, sort_order, additional_unit_price FROM service_catalog "
                 "WHERE tenant_id = %s ORDER BY sort_order, id", (tid,))
             services = [
                 {"id": r[0], "code": r[1], "name": r[2],
                  "price": float(r[3]) if r[3] is not None else None,
                  "formula": r[4], "category": r[5] or "other",
-                 "active": bool(r[6]), "sort": r[7]}
+                 "active": bool(r[6]), "sort": r[7],
+                 "add_price": float(r[8]) if r[8] is not None else None}
                 for r in cursor.fetchall()
             ]
             cursor.close(); conn.close()
@@ -1587,6 +1637,12 @@ def lambda_handler(event, context):
                 price = round(float(price_raw), 2) if price_raw is not None else None
             except (TypeError, ValueError):
                 return _bad("Price must be a number")
+            # Per-additional amount for quantity-priced (spoke) services.
+            add_raw = svc.get("add_price")
+            try:
+                add_price = round(float(add_raw), 2) if add_raw is not None else None
+            except (TypeError, ValueError):
+                return _bad("Additional-unit price must be a number")
             try:
                 sort = int(svc.get("sort") or 0)
             except (TypeError, ValueError):
@@ -1610,14 +1666,20 @@ def lambda_handler(event, context):
                     formula = row[0]
                     if not name:
                         return _bad("Name is required")
-                    if formula == "fixed" and (price is None or price < 0 or price > 99999):
+                    # Price rules by formula: fixed -> the price box; spoke -> the
+                    # first-spoke price (default_price) + each-additional
+                    # (additional_unit_price); custom -> price set per order.
+                    if formula in ("fixed", "spoke") and (price is None or price < 0 or price > 99999):
                         return _bad("Price must be between 0 and 99999")
+                    if formula == "spoke" and add_price is not None and (add_price < 0 or add_price > 99999):
+                        return _bad("Additional-spoke price must be between 0 and 99999")
                     cursor.execute(
                         "UPDATE service_catalog SET display_name=%s, "
-                        "default_price=COALESCE(%s, default_price), category=%s, "
-                        "is_active=%s, sort_order=%s "
+                        "default_price=COALESCE(%s, default_price), "
+                        "additional_unit_price=COALESCE(%s, additional_unit_price), "
+                        "category=%s, is_active=%s, sort_order=%s "
                         "WHERE id=%s AND tenant_id=%s",
-                        (name, price, category, active, sort, sid, tid))
+                        (name, price, add_price, category, active, sort, sid, tid))
                 else:
                     # ── Add a new fixed-price service ───────────────────────
                     if not name:

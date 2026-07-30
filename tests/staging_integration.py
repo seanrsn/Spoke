@@ -493,7 +493,11 @@ def test_public_intake_tenant_routing():
     conn = _db()
     T2_ORIGIN = "https://itest-tenant2.example.com"
     BB_ORIGIN = "https://staging.brooklynbikery.com"
-    P2, P1 = "5005559111", "5005559112"
+    # Unique phones per run: the public form rate-limits 3 submissions/phone/hour
+    # in-memory, so reusing a fixed phone across reruns within an hour would trip
+    # a 429. Time-derived 10-digit numbers avoid that and are still scrubbed.
+    _base = int(time.time())
+    P2, P1 = str(_base), str(_base + 1)
 
     def intake(origin, name, phone):
         form = _up.urlencode({"name": name, "phone": phone, "notes": "itest routing",
@@ -545,10 +549,97 @@ def test_public_intake_tenant_routing():
         conn.close()
 
 
+def test_change_password():
+    """Authenticated self-service password change: wrong current -> 401, too
+    short -> 400, valid change rotates the secret so the old password stops
+    working and the new one logs in. Restores the original password via a
+    direct secret write (the original may be shorter than the 8-char API
+    minimum, so it can't be restored through the endpoint)."""
+    api = STAGING["admin_api"] + "/AdminDashboard"
+    orig = _secret(STAGING["admin_pw_secret"])["password"]
+    TEMP = "itest-temp-pw-9animals"
+    try:
+        _, b = _http(api, {"action": "login", "password": orig})
+        tok = b["token"]
+        # wrong current password -> 403 (NOT 401: session is valid, so a 401
+        # would make the frontend log the admin out instead of showing the error)
+        sc, _ = _http(api, {"action": "change-password", "currentPassword": "definitely-wrong",
+                            "newPassword": "another-good-1"}, tok)
+        assert sc == 403, f"wrong current should be 403, got {sc}"
+        # too short
+        sc, _ = _http(api, {"action": "change-password", "currentPassword": orig,
+                            "newPassword": "short"}, tok)
+        assert sc == 400, f"short new password should be 400, got {sc}"
+        # valid change
+        sc, _ = _http(api, {"action": "change-password", "currentPassword": orig,
+                            "newPassword": TEMP}, tok)
+        assert sc == 200, f"valid change should be 200, got {sc}"
+        # old password no longer works; new one does
+        sc_old, _ = _http(api, {"action": "login", "password": orig})
+        sc_new, _ = _http(api, {"action": "login", "password": TEMP})
+        assert sc_old == 401, f"old password should fail after change, got {sc_old}"
+        assert sc_new == 200, f"new password should work after change, got {sc_new}"
+        return "wrong-current 403; short 400; valid rotates secret (old fails, new works)"
+    finally:
+        # Restore the original password directly (bypasses the 8-char API rule).
+        sm.put_secret_value(SecretId=STAGING["admin_pw_secret"],
+                            SecretString=json.dumps({"password": orig}))
+
+
+def test_spoke_pricing_data_driven():
+    """Spoke (quantity-based) pricing is per-shop DATA now, not a hardcoded
+    33+2*qty in the Lambda: editing the catalog row's first-spoke + each-
+    additional amounts changes what a spoke order charges. Restores originals."""
+    conn = _db()
+    api = STAGING["admin_api"] + "/AdminDashboard"
+    pw = _secret(STAGING["admin_pw_secret"])["password"]
+    _, b = _http(api, {"action": "login", "password": pw}); tok = b["token"]
+    with conn.cursor() as c:
+        c.execute("SELECT id, display_name, default_price, additional_unit_price, category, "
+                  "sort_order, is_active FROM service_catalog WHERE tenant_id=1 AND code='front_fix_spoke'")
+        o = c.fetchone()
+    sid = o["id"]
+    def save(price, add):
+        return _http(api, {"action": "catalog-save", "service": {
+            "id": sid, "name": o["display_name"], "price": price, "add_price": add,
+            "category": o["category"], "active": bool(o["is_active"]), "sort": o["sort_order"]}}, tok)[0]
+    PHONE = "+15005557001"
+    try:
+        assert save(50, 7) == 200, "catalog-save spoke failed"
+        with conn.cursor() as c:
+            c.execute("DELETE o FROM orders o JOIN customers cu ON cu.id=o.customer_id WHERE cu.phone=%s", (PHONE,))
+            c.execute("DELETE FROM customers WHERE tenant_id=1 AND phone=%s", (PHONE,))
+            c.execute("INSERT INTO customers (tenant_id,name,phone,date_created) VALUES (1,'Spoke ITest',%s,CURDATE())", (PHONE,))
+            cid = c.lastrowid
+            c.execute("INSERT INTO orders (tenant_id,customer_id,date_of_service) VALUES (1,%s,CURDATE())", (cid,))
+            oid = c.lastrowid
+        st, out = _invoke_backend({"isNewCustomer": False, "orderId": oid, "lookupPhone": PHONE,
+                                   "serviceCodes": [], "frontSpokes": 2, "sendInvoice": False,
+                                   "notes": "", "bikeDescription": ""})
+        assert st == 200, f"spoke order submit failed: {st}"
+        with conn.cursor() as c:
+            c.execute("SELECT price FROM orders WHERE id=%s", (oid,))
+            price = float(c.fetchone()["price"])
+        # first $50 + each-additional $7 * (2-1) = $57 (NOT the old 33+2*2=37)
+        assert abs(price - 57.0) < 0.01, f"2 spokes @ 50/7 should be $57, got ${price}"
+        return "spoke pricing is data-driven: first $50 + $7 each -> 2 spokes = $57"
+    finally:
+        save(float(o["default_price"]), float(o["additional_unit_price"]))  # restore
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM customers WHERE tenant_id=1 AND phone=%s", (PHONE,))
+            r = c.fetchone()
+            if r:
+                cid = r["id"]
+                c.execute("DELETE FROM order_services WHERE order_id IN (SELECT id FROM orders WHERE customer_id=%s AND tenant_id=1)", (cid,))
+                c.execute("DELETE FROM orders WHERE customer_id=%s AND tenant_id=1", (cid,))
+                c.execute("DELETE FROM customers WHERE id=%s", (cid,))
+        conn.close()
+
+
 TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
          test_sms_cannot_deliver, test_tenant_isolation, test_login_returns_shop,
          test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status,
-         test_public_intake_tenant_routing]
+         test_public_intake_tenant_routing, test_change_password, test_spoke_pricing_data_driven]
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")

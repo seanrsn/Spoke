@@ -369,7 +369,7 @@
         <span class="checkmark">✅</span>
       </div>
       <h3>Successfully Submitted!</h3>
-      <p>We've got your info and will be in touch soon.<br><br><strong>Brooklyn Bikery</strong><br>Ride with confidence, and a smile! 🚴</p>
+      <p>We've got your info and will be in touch soon.<br><br><strong id="successShopName">Brooklyn Bikery</strong><br>Ride with confidence, and a smile! 🚴</p>
     </div>
   </div>
 
@@ -387,7 +387,7 @@
   <form class="form-container" id="bikeForm">
     <div class="header-section">
       <div class="bike-emoji">🚴</div>
-      <h2>Brooklyn Bikery</h2>
+      <h2 id="shopName">Brooklyn Bikery</h2>
       <p class="subtitle">Brooklyn's fastest pit stop!</p>
     </div>
 
@@ -442,6 +442,43 @@
   </form>
 
   <script>
+    // ============================================
+    // MULTI-TENANCY: tenant resolution + branding
+    // The public intake page is served from each shop's own origin. It shows
+    // THAT shop's name (not Brooklyn Bikery's) and tags the submission with the
+    // shop so it files under the right tenant even on the shared host via
+    // ?tenant=. Order: ?tenant= param -> {slug}.bluewrenchhq.com subdomain ->
+    // null (Brooklyn Bikery). Default hosts keep the static BB branding with
+    // zero network calls — behavior unchanged for BB.
+    const API_CUSTOMER = 'https://pp7s8cgqke.execute-api.us-east-1.amazonaws.com/stage/SubmitCustomerForm';
+    const API_ADMIN = 'https://rqshavktfa.execute-api.us-east-1.amazonaws.com/stage/AdminDashboard';
+    function resolveTenantSlug() {
+      const p = new URLSearchParams(window.location.search).get('tenant');
+      if (p) return p.trim().toLowerCase();
+      const m = window.location.hostname.match(/^([a-z0-9-]+)\.bluewrenchhq\.com$/);
+      if (m && !['www', 'app', 'staging'].includes(m[1])) return m[1];
+      return null;
+    }
+    const TENANT_SLUG = resolveTenantSlug();
+
+    (async function applyTenantBranding() {
+      if (!TENANT_SLUG) return;
+      const h = document.getElementById('shopName');
+      const s = document.getElementById('successShopName');
+      const cacheKey = 'bikeryBrand_' + TENANT_SLUG;
+      const setName = (n) => { if (h) h.textContent = n; if (s) s.textContent = n; document.title = n + ' Service Form'; };
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) setName(cached);
+      try {
+        const res = await fetch(API_ADMIN, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'branding', tenant: TENANT_SLUG })
+        });
+        const d = await res.json();
+        if (res.ok && d.displayName) { localStorage.setItem(cacheKey, d.displayName); setName(d.displayName); }
+      } catch (e) { /* keep whatever brand is showing */ }
+    })();
+
     window.addEventListener('DOMContentLoaded', () => {
       const form = document.getElementById('bikeForm');
       const submitBtn = document.getElementById('submitBtn');
@@ -489,9 +526,13 @@
 
         const formData = new FormData(form);
         const encoded = new URLSearchParams(formData);
+        // Tag the submission with the resolved shop so it files under the right
+        // tenant even on the shared host (?tenant=). On a shop's own origin the
+        // backend resolves the same tenant from the Origin header regardless.
+        if (TENANT_SLUG) encoded.set('tenant', TENANT_SLUG);
 
         try {
-          const res = await fetch('https://pp7s8cgqke.execute-api.us-east-1.amazonaws.com/stage/SubmitCustomerForm', {
+          const res = await fetch(API_CUSTOMER, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: encoded

@@ -1066,7 +1066,9 @@ function renderCatalog(services) {
   const cboxFull = s => `<label><input type="checkbox" data-code="${esc(s.code)}"> ${esc(s.name)} (${fmtPrice(s.price)})</label>`;
   const spokeRow = s => {
     const field = s.code === 'front_fix_spoke' ? 'frontSpokes' : (s.code === 'rear_fix_spoke' ? 'rearSpokes' : `qty_${s.code}`);
-    return `<div class="spoke-input-row"><input type="number" name="${esc(field)}" min="0" placeholder="0"><span>Fix Spokes ($35 first, $2 each additional)</span></div>`;
+    const first = (s.price != null) ? s.price : 35;
+    const each = (s.add_price != null) ? s.add_price : 2;
+    return `<div class="spoke-input-row"><input type="number" name="${esc(field)}" min="0" placeholder="0"><span>Fix Spokes ($${first} first, $${each} each additional)</span></div>`;
   };
 
   let html = '';
