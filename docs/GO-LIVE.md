@@ -4,7 +4,7 @@ The single source of truth for "what's left before we can sell to another bike
 shop." Everything marked ✅ is built and verified on staging. Everything under
 **You** needs a human decision or a third party — I can't close those from code.
 
-Last updated: 2026-07-24.
+Last updated: 2026-09-07.
 
 ---
 
@@ -26,25 +26,47 @@ Last updated: 2026-07-24.
 - ✅ **Self-service password change** for a logged-in admin.
 - ✅ **Per-tenant CSV export** (customers / orders / messages).
 - ✅ **Gated deploys** — prod deploys only after the staging integration suite
-  passes (11/11, run in-VPC via the test bridge).
+  passes (15/15, run in-VPC via the test bridge).
 - ✅ **Docs** — ONBOARDING, A2P-10DLC, OPERATIONS runbooks; ToS/Privacy drafts.
 
 ## Environment state (IMPORTANT)
 
-Staging is intentionally **ahead of prod** right now. These are on
-`staging.brooklynbikery.com` only, NOT in prod, pending an explicit prod push:
-- Admin self-service password change (endpoint + dashboard UI)
-- Public intake per-shop branding + `?tenant=` slug routing
+Prod and `main` have been in sync since 2026-07-30 (the readiness-hardening
+branch auto-merged and all four Lambdas + the site deployed that day). The
+self-service password change and branded intake ARE in prod.
 
-Prod (`brooklynbikery.com`) has everything from earlier in the readiness work
-(catalog, SMS compliance, CORS, export, marketing pages, intake tenant-routing).
-To ship the staging-only items to prod: commit the working tree and push
-`claude/**` → the gate runs → prod deploys. **Do not push without the owner's
-explicit go** (repo rule).
+The **`staging` branch is ahead of prod** with the pre-pilot hardening
+(2026-09-07). On `staging.brooklynbikery.com` only, pending an explicit prod
+push:
+- **Per-shop Twilio webhook validation.** Inbound texts and delivery-status
+  callbacks are validated with the token of the shop they're for (resolved
+  from the `?msgRowId=` message row, else the shop's number), so a shop on its
+  own Twilio subaccount works, and a shop with no token yet is refused (403)
+  instead of being validated — and filed — under Brooklyn Bikery. Status
+  updates and push-unsubscribe are tenant-scoped.
+- **Fail-closed tenant resolution.** Unknown login slug → 401; token without
+  a tenant claim → 401 (admin + backend); public intake with an unknown
+  `?tenant=` slug → 400, from an unrecognized Origin → 403. Nothing falls
+  through to tenant 1 unless the request is genuinely for the shared host.
+- **Tenant config cache TTL (5 min)** so Twilio/status edits take effect on
+  warm containers without a redeploy (`TENANT_CACHE_TTL` env overrides).
+- **Migration 008** (drop the `DEFAULT '1'` bridge on `tenant_id`) — written,
+  **not yet applied** to staging or prod. Apply staging first:
+  `BIKERY_DB_SECRET=bikeshop-credentials-staging python migrations/run_migration.py migrations/008_drop_tenant_id_defaults.sql`
+  then prod (no env var). The code does not depend on it either way; it makes
+  a future unscoped INSERT fail loudly instead of filing under tenant 1.
+- Suite is 15 tests (was 13): + `test_webhook_per_tenant_validation`,
+  `test_fail_closed`.
+
+**Promote this before the first real shop.** To promote: merge `staging`
+into `main` (or push a `claude/**` branch) → the prod gate runs the suite on
+staging → prod deploys. **Do not push to prod without the owner's explicit
+go** (repo rule).
 
 Staging-only scaffolding to clean up before/after a real launch:
 - Demo tenant `test-bike-co` (id 3) + its `bikery-admin-password-test-bike-co`
   secret + `test-bike-co.staging.example.com` CORS entries on the 3 staging APIs.
+  (`test-shop`, id 2, is REQUIRED by the isolation tests — keep it on staging.)
 - `TENANT_ORIGIN_TTL=2` env on `SubmitCustomerForm-staging` (test-only; prod uses 300).
 
 ---

@@ -99,19 +99,23 @@ def get_secret():
     return json.loads(resp["SecretString"])
 
 # ============================================
-# TENANT CONFIG (multi-tenancy migration, step 7)
-# Per-warm-container cache. tenant_id hardcoded to 1 (Brooklyn Bikery) at
-# call sites until step 8 wires up URL-based tenant resolution.
+# TENANT CONFIG (multi-tenancy, step 7+)
+# Per-warm-container cache WITH a TTL: a shop's Twilio number/token or its
+# status can change after onboarding (or on suspension); without a TTL a warm
+# container would serve stale config until it recycled. TENANT_CACHE_TTL
+# (seconds) overrides the default.
 # ============================================
 _TENANT_CACHE: dict = {}
+_TENANT_CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "300"))
 
-def get_tenant(tenant_id: int = 1) -> dict:
+def get_tenant(tenant_id: int) -> dict:
     """
-    Load per-tenant config from the `tenants` table. Cached for the lifetime
-    of the warm container.
+    Load per-tenant config from the `tenants` table. Cached per warm
+    container for _TENANT_CACHE_TTL seconds.
     """
-    if tenant_id in _TENANT_CACHE:
-        return _TENANT_CACHE[tenant_id]
+    hit = _TENANT_CACHE.get(tenant_id)
+    if hit and time.time() - hit[0] < _TENANT_CACHE_TTL:
+        return hit[1]
     secret = get_secret()  # bikeshop-credentials (shared DB)
     conn = pymysql.connect(
         host=secret["host"],
@@ -139,24 +143,32 @@ def get_tenant(tenant_id: int = 1) -> dict:
                 raise RuntimeError(
                     f"Tenant {tenant_id} ({t['slug']}) status is {t['status']!r}"
                 )
-            _TENANT_CACHE[tenant_id] = t
+            _TENANT_CACHE[tenant_id] = (time.time(), t)
             return t
     finally:
         conn.close()
 
 def resolve_tenant_id(payload=None, body=None):
-    """Tenant for this request (multi-tenancy step 8).
+    """Tenant for this request (multi-tenancy step 8; FAIL-CLOSED since the
+    pre-pilot hardening).
 
-    Prefer the verified JWT claim (set at login); else a login slug in the body;
-    else default to Brooklyn Bikery (tenant 1). The default keeps existing
-    single-tenant traffic and any pre-step-8 tokens behaving EXACTLY as before.
+    - Authenticated requests (payload given): the tenant is the verified JWT
+      claim. A token without a usable claim resolves to None (caller -> 401).
+      Every token minted since step 8 carries the claim, so this only ever
+      rejects forged or ancient tokens.
+    - Login (body given): a `tenant`/`shop` slug selects the shop. An unknown
+      or inactive slug resolves to None (caller -> 401). It must NEVER fall
+      through to Brooklyn Bikery: a typo'd or suspended shop would otherwise
+      log into, and file its work under, the wrong tenant.
+    - No slug at all on login = the shared brooklynbikery.com host = tenant 1.
     """
-    if payload and payload.get("tenant_id"):
+    if payload is not None:
         try:
-            return int(payload["tenant_id"])
+            tid = int(payload.get("tenant_id"))
         except (TypeError, ValueError):
-            return 1
-    slug = (body or {}).get("tenant") or (body or {}).get("shop")
+            return None
+        return tid if tid > 0 else None
+    slug = ((body or {}).get("tenant") or (body or {}).get("shop") or "").strip().lower()
     if slug:
         secret = get_secret()
         conn = pymysql.connect(host=secret["host"], user=secret["user"],
@@ -166,13 +178,12 @@ def resolve_tenant_id(payload=None, body=None):
             with conn.cursor() as cur:
                 cur.execute("SELECT id FROM tenants WHERE slug = %s AND status = 'active'", (slug,))
                 row = cur.fetchone()
-                if row:
-                    return int(row[0])
+                return int(row[0]) if row else None
         finally:
             conn.close()
     return 1
 
-def get_admin_password(tenant_id: int = 1):
+def get_admin_password(tenant_id: int):
     """
     Retrieve admin password from AWS Secrets Manager. The secret ARN is now
     per-tenant (was hardcoded to 'bikery-admin-password' before step 7).
@@ -214,19 +225,75 @@ def get_jwt_secret():
         print(f"Error fetching JWT secret: {e}")
         raise
 
-def get_twilio_auth_token():
-    """Fetch Twilio auth token from Secrets Manager for webhook signature validation.
-    Secret ARN is now per-tenant (step 7). tenant_id=1 hardcoded until step 8."""
+_TWILIO_TOKEN_CACHE: dict = {}
+
+def get_twilio_auth_token(tenant_id: int):
+    """Twilio auth token for ONE tenant (webhook signature validation).
+
+    Each shop may run its own Twilio subaccount with its own token, so the
+    validator must use the token of the shop the webhook is FOR — never a
+    fixed tenant's. Returns None when the tenant has no token configured
+    (e.g. a shop whose SMS isn't registered yet) so the caller REFUSES the
+    webhook instead of validating it against someone else's credentials.
+    """
+    hit = _TWILIO_TOKEN_CACHE.get(tenant_id)
+    if hit and time.time() - hit[0] < _TENANT_CACHE_TTL:
+        return hit[1]
     try:
-        tenant = get_tenant(1)
+        tenant = get_tenant(tenant_id)
+        arn = (tenant.get("twilio_auth_token_secret_arn") or "").strip()
+        if not arn:
+            print(f"WARN: tenant {tenant_id} has no Twilio auth-token secret configured")
+            return None
         client = boto3.client("secretsmanager", region_name=REGION)
-        resp = client.get_secret_value(SecretId=tenant["twilio_auth_token_secret_arn"])
+        resp = client.get_secret_value(SecretId=arn)
         secret_data = json.loads(resp["SecretString"])
         # Try both common key names
-        return secret_data.get("auth_token") or secret_data.get("authToken") or ""
+        token = secret_data.get("auth_token") or secret_data.get("authToken") or ""
+        if not token:
+            return None
+        _TWILIO_TOKEN_CACHE[tenant_id] = (time.time(), token)
+        return token
     except Exception as e:
-        print(f"Error fetching Twilio auth token: {e}")
+        print(f"Error fetching Twilio auth token for tenant {tenant_id}: {e}")
         return None
+
+def resolve_webhook_tenant_id(form, row_id):
+    """Which shop is this Twilio webhook FOR? Decided BEFORE signature
+    validation so the signature is checked with that shop's own token.
+
+    1. Delivery-status callbacks carry ?msgRowId= -> the message row's tenant.
+    2. Otherwise the shop's Twilio number: `To` for an inbound text (customer
+       -> shop), `From` for a status callback (shop -> customer).
+    3. Nothing matched -> tenant 1 (Brooklyn Bikery). Not a silent fail-open:
+       the request still has to carry a signature made with tenant 1's token,
+       which another shop's subaccount cannot produce.
+    Returns (tenant_id, how) where `how` is for the log line.
+    """
+    to_number = (form.get("To") or [""])[0]
+    from_number = (form.get("From") or [""])[0]
+    secret = get_secret()
+    conn = pymysql.connect(host=secret["host"], user=secret["user"],
+                           password=secret["password"], database=secret["database"],
+                           connect_timeout=5, charset="utf8mb4")
+    try:
+        with conn.cursor() as cur:
+            if row_id:
+                cur.execute("SELECT tenant_id FROM messages WHERE id = %s", (int(row_id),))
+                row = cur.fetchone()
+                if row:
+                    return int(row[0]), "message row"
+            for label, number in (("To", to_number), ("From", from_number)):
+                if not number:
+                    continue
+                cur.execute("SELECT id FROM tenants WHERE twilio_from_number = %s "
+                            "AND status = 'active' ORDER BY id LIMIT 1", (number,))
+                row = cur.fetchone()
+                if row:
+                    return int(row[0]), f"{label} number"
+    finally:
+        conn.close()
+    return 1, "default"
 
 # ============================================
 # MULTI-TENANCY: ORDER SERVICES SYNTHESIS (step 5)
@@ -343,9 +410,10 @@ def synthesize_order_services(cursor, tenant_id, order_ids):
     return result
 
 
-def validate_twilio_signature(event, raw_body):
+def validate_twilio_signature(event, raw_body, tenant_id):
     """
-    Validate Twilio's X-Twilio-Signature against the request.
+    Validate Twilio's X-Twilio-Signature against the request, using the
+    auth token of the tenant the webhook is for (see resolve_webhook_tenant_id).
     Returns True if valid, False if missing/invalid/can't be checked.
     Reference: https://www.twilio.com/docs/usage/webhooks/webhooks-security
     """
@@ -357,9 +425,9 @@ def validate_twilio_signature(event, raw_body):
         return False
     twilio_sig = headers[sig_header_key]
 
-    auth_token = get_twilio_auth_token()
+    auth_token = get_twilio_auth_token(tenant_id)
     if not auth_token:
-        print("WARN: Twilio auth token unavailable, refusing to validate")
+        print(f"WARN: Twilio auth token unavailable for tenant {tenant_id}, refusing to validate")
         return False
 
     # Reconstruct the URL Twilio called.
@@ -748,6 +816,10 @@ def lambda_handler(event, context):
             # (absent -> Brooklyn Bikery / tenant 1). Validate against THAT
             # tenant's password and stamp the tenant into the JWT below.
             login_tid = resolve_tenant_id(body=body)
+            if not login_tid:
+                record_login_attempt(ip_address, False)
+                print(f"❌ Login for unknown/inactive shop {body.get('tenant') or body.get('shop')!r} from {ip_address}")
+                return response(401, {"error": "Unknown shop"})
             correct_password = get_admin_password(login_tid)
             if not correct_password:
                 return response(500, {"error": "Authentication service unavailable"})
@@ -856,19 +928,32 @@ def lambda_handler(event, context):
             if event.get("isBase64Encoded"):
                 webhook_body = base64.b64decode(webhook_body).decode('utf-8')
 
+            # Parse URL-encoded form data from Twilio. (Parsing untrusted input
+            # is harmless; nothing is acted on until the signature checks out.)
+            from urllib.parse import parse_qs
+            form_data = parse_qs(webhook_body)
+            qs = event.get("queryStringParameters") or {}
+            row_id = qs.get("msgRowId")
+            if row_id and not str(row_id).isdigit():
+                row_id = None
+
+            # Multi-tenant: decide WHICH shop this webhook is for, then validate
+            # the signature with THAT shop's Twilio token. A shop on its own
+            # Twilio subaccount has its own token; validating everything against
+            # tenant 1's token would 403 every other shop's replies, STOPs and
+            # delivery receipts — or accept them under the wrong shop.
+            webhook_tid, how = resolve_webhook_tenant_id(form_data, row_id)
+            print(f"🏷️ Webhook tenant {webhook_tid} (by {how})")
+
             # CRITICAL: validate Twilio signature before any DB writes / push fan-out.
             # Without this, anyone can spoof "customer replies" and trigger push storms.
-            if not validate_twilio_signature(event, webhook_body):
-                print("⛔ Twilio signature validation failed — rejecting webhook")
+            if not validate_twilio_signature(event, webhook_body, webhook_tid):
+                print(f"⛔ Twilio signature validation failed for tenant {webhook_tid} — rejecting webhook")
                 return {
                     "statusCode": 403,
                     "headers": {"Content-Type": "text/xml"},
                     "body": "<Response></Response>"
                 }
-
-            # Parse URL-encoded form data from Twilio
-            from urllib.parse import parse_qs
-            form_data = parse_qs(webhook_body)
 
             # Extract message details from Twilio webhook
             from_number = form_data.get('From', [''])[0]
@@ -888,9 +973,7 @@ def lambda_handler(event, context):
                     "undelivered": "failed", "failed": "failed",
                 }
                 new_status = status_map.get(message_status)
-                qs = event.get("queryStringParameters") or {}
-                row_id = qs.get("msgRowId")
-                print(f"📬 Status callback: sid={twilio_sid} status={message_status} rowId={row_id}")
+                print(f"📬 Status callback: sid={twilio_sid} status={message_status} rowId={row_id} tenant={webhook_tid}")
                 if new_status:
                     try:
                         secret = get_secret()
@@ -898,17 +981,21 @@ def lambda_handler(event, context):
                                                password=secret["password"], database=secret["database"],
                                                connect_timeout=5)
                         cursor = conn.cursor()
+                        # Scoped to the webhook's tenant: a callback can only
+                        # ever touch the message rows of the shop it was
+                        # validated for.
                         if row_id:
                             cursor.execute(
-                                "UPDATE messages SET status=%s, twilio_sid=%s WHERE id=%s",
-                                (new_status, twilio_sid or None, int(row_id)))
+                                "UPDATE messages SET status=%s, twilio_sid=%s WHERE id=%s AND tenant_id=%s",
+                                (new_status, twilio_sid or None, int(row_id), webhook_tid))
                         elif twilio_sid:
                             cursor.execute(
-                                "UPDATE messages SET status=%s WHERE twilio_sid=%s",
-                                (new_status, twilio_sid))
+                                "UPDATE messages SET status=%s WHERE twilio_sid=%s AND tenant_id=%s",
+                                (new_status, twilio_sid, webhook_tid))
+                        updated = cursor.rowcount
                         conn.commit()
                         cursor.close(); conn.close()
-                        print(f"✅ Message status -> {new_status}")
+                        print(f"✅ Message status -> {new_status} ({updated} row(s), tenant {webhook_tid})")
                     except Exception as st_err:
                         print(f"⚠️ Status update failed: {st_err}")
                 return {
@@ -939,20 +1026,9 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            # Resolve tenant for this inbound webhook by matching the number
-            # the customer texted (`To`) against each shop's Twilio number.
-            # Unmatched -> tenant 1 (Brooklyn Bikery) for legacy behavior.
-            inbound_tid = 1
-            try:
-                cursor.execute(
-                    "SELECT id FROM tenants WHERE twilio_from_number = %s AND status='active'",
-                    (to_number,))
-                trow = cursor.fetchone()
-                if trow:
-                    inbound_tid = trow[0]
-            except Exception as tr_err:
-                print(f"⚠️ Inbound tenant match failed, defaulting to 1: {tr_err}")
-            tenant = get_tenant(inbound_tid)
+            # The shop this text is for was resolved (by the `To` number) and
+            # its signature verified with that shop's token above.
+            tenant = get_tenant(webhook_tid)
 
             # Use from_number as the phone (customer's number)
             cursor.execute("""
@@ -1025,9 +1101,12 @@ def lambda_handler(event, context):
 
     # Multi-tenancy step 8: the tenant comes from the VERIFIED token (set at
     # login). Every data query below is scoped by this `tid` so one shop can
-    # never see or touch another's rows. Pre-step-8 tokens lack the claim and
-    # resolve to 1 (Brooklyn Bikery) — unchanged behavior.
+    # never see or touch another's rows. A token without the claim is refused
+    # (fail closed) rather than assumed to be Brooklyn Bikery.
     tid = resolve_tenant_id(payload=payload)
+    if not tid:
+        print("❌ Token carries no usable tenant claim — refusing (fail closed)")
+        return response(401, {"error": "Session is missing its shop; please log in again"})
     print(f"✅ Authenticated admin request (tenant {tid})")
 
     # ============================================
@@ -1573,7 +1652,8 @@ def lambda_handler(event, context):
             )
             cursor = conn.cursor()
 
-            cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = %s", (endpoint,))
+            cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = %s AND tenant_id = %s",
+                           (endpoint, tid))
 
             conn.commit()
             cursor.close()

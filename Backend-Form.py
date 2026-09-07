@@ -24,13 +24,6 @@ import pymysql
 REGION = os.getenv("AWS_REGION", "us-east-1")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://brooklynbikery.com")
 
-# tenant_id is hardcoded to 1 (Brooklyn Bikery) until the multi-tenancy
-# migration (step 8) wires up tenant resolution from the request URL.
-# Module-level so the edit/lookup path and the order_services writer both
-# reference the same constant (a local assignment would shadow it and break
-# earlier references with UnboundLocalError).
-TENANT_ID = 1
-
 # ── Multi-origin CORS ────────────────────────────────────────────────────────
 # Each tenant can serve its admin pages from its own origin (future
 # {shop}.bluewrenchhq.com). The allow-list is: the env-var origin (prod or
@@ -199,21 +192,25 @@ def get_db_secret():
     return json.loads(client.get_secret_value(SecretId=os.getenv("DB_SECRET_ID", "bikeshop-credentials"))["SecretString"])
 
 # ============================================
-# TENANT CONFIG (multi-tenancy migration, step 7)
-# Per-warm-container cache. tenant_id hardcoded to 1 (Brooklyn Bikery) at
-# call sites until step 8 wires up URL-based tenant resolution.
+# TENANT CONFIG (multi-tenancy, step 7+)
+# Per-warm-container cache with a TTL. The tenant id always comes from the
+# verified JWT (see lambda_handler); there is no default tenant.
 # ============================================
 _TENANT_CACHE: dict = {}
+# TTL so shop config changes (Twilio number/token, status) take effect on warm
+# containers without a redeploy. TENANT_CACHE_TTL (seconds) overrides.
+_TENANT_CACHE_TTL = int(os.getenv("TENANT_CACHE_TTL", "300"))
 
-def get_tenant(tenant_id: int = 1) -> dict:
+def get_tenant(tenant_id: int) -> dict:
     """
-    Load per-tenant config from the `tenants` table. Cached for the lifetime
-    of the warm container — first call hits the DB, subsequent calls are free.
+    Load per-tenant config from the `tenants` table. Cached per warm
+    container for _TENANT_CACHE_TTL seconds.
     Raises on missing tenant or non-active status (defensive: a shop we've
     suspended for non-payment shouldn't be able to process orders).
     """
-    if tenant_id in _TENANT_CACHE:
-        return _TENANT_CACHE[tenant_id]
+    hit = _TENANT_CACHE.get(tenant_id)
+    if hit and time.time() - hit[0] < _TENANT_CACHE_TTL:
+        return hit[1]
     secret = get_db_secret()
     conn = pymysql.connect(
         host=secret["host"],
@@ -242,7 +239,7 @@ def get_tenant(tenant_id: int = 1) -> dict:
                     f"Tenant {tenant_id} ({tenant['slug']}) status is "
                     f"{tenant['status']!r}, refusing to serve"
                 )
-            _TENANT_CACHE[tenant_id] = tenant
+            _TENANT_CACHE[tenant_id] = (time.time(), tenant)
             return tenant
     finally:
         conn.close()
@@ -389,10 +386,17 @@ def lambda_handler(event, context):
     
     print(f"✅ Authenticated request")
 
-    # Multi-tenancy step 8: tenant comes from the VERIFIED token (absent -> 1,
-    # so pre-step-8 tokens behave unchanged). Every customer/order/service query
-    # below is scoped by this tid so a shop can never touch another's rows.
-    tid = int(payload.get("tenant_id") or 1)
+    # Multi-tenancy step 8: tenant comes from the VERIFIED token. Every
+    # customer/order/service query below is scoped by this tid so a shop can
+    # never touch another's rows. A token without the claim is refused (fail
+    # closed) rather than assumed to be Brooklyn Bikery.
+    try:
+        tid = int(payload.get("tenant_id"))
+    except (TypeError, ValueError):
+        tid = 0
+    if tid <= 0:
+        print("❌ Token carries no usable tenant claim — refusing (fail closed)")
+        return response(401, {"error": "Session is missing its shop; please log in again"})
 
     # ============================================
     # GET request - Get latest phone number

@@ -76,7 +76,8 @@ snapshot), `pywebpush-layer.zip`, `spoke-repo.tar.gz`. All `.gitignore`d.
 1. **`prepare` job**: claude/* pushes auto-merge into main (PRs squash-merge).
 2. **`prod-gate` job (prod targets only)**: deploys the exact same code to the
    -staging Lambdas + staging site, then runs `tests/staging_integration.py`
-   (9 tests incl. wrong-order regression, tenant isolation, SMS compliance).
+   (15 tests incl. wrong-order regression, tenant isolation, per-shop webhook
+   validation, fail-closed tenant resolution, SMS compliance).
    **Prod jobs run only if this is green.**
 3. **`deploy-lambdas` / `deploy-frontend` jobs**: package `.py` files → Lambdas;
    sync html/css/js/json → `s3://brooklynbikery.com` + CloudFront invalidation
@@ -97,6 +98,15 @@ unless explicitly asked, and ALWAYS asks before `git pull`.
 - Rate limit: 5 failed attempts before lockout (in-memory, resets on cold start —
   yes, that's the actual behavior, don't "fix" it without checking with user).
 - All admin endpoints check `Authorization: Bearer <jwt>` and verify the HMAC sig.
+- Every JWT carries `tenant_id` (stamped at login). Tenant resolution is
+  FAIL-CLOSED: a token without the claim is refused (401); a login with a
+  `tenant` slug that matches no active shop is refused (401); the public intake
+  refuses an unknown `?tenant=` slug (400) or an unrecognized Origin (403).
+  Nothing silently falls back to Brooklyn Bikery except a slug-less login /
+  intake on the shared brooklynbikery.com host.
+- Twilio webhooks are validated with the token of the shop they are FOR
+  (status callbacks: the `?msgRowId=` message row; inbound: `To` matched to
+  `tenants.twilio_from_number`). A shop with no token configured gets 403.
 
 CORS origin is hardcoded to `https://brooklynbikery.com` via `ALLOWED_ORIGIN` env var.
 

@@ -79,15 +79,35 @@ def _tenant_origin_rows():
     return rows
 
 
+def _is_shared_host(origin):
+    """True for the shared brooklynbikery.com host(s): the env default plus
+    the apex and any subdomain (www., staging.)."""
+    if origin == ALLOWED_ORIGIN:
+        return True
+    host = origin.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+    return host == "brooklynbikery.com" or host.endswith(".brooklynbikery.com")
+
+
 def resolve_request(event):
-    """Set the reflected CORS origin and the tenant for THIS request (by Origin)."""
+    """Set the reflected CORS origin and the tenant for THIS request (by Origin).
+
+    FAIL CLOSED: an Origin we don't recognize is NOT quietly filed under
+    tenant 1 (that would drop a stranger's — or a misconfigured shop's —
+    customers into Brooklyn Bikery's data).
+      - matches a shop's allowed_origin                  -> that shop
+      - the shared brooklynbikery.com host, or no Origin
+        at all (non-browser caller)                      -> tenant 1, which a
+                                                            ?tenant= slug may
+                                                            override
+      - anything else                                    -> None (handler 403s)
+    """
     global _REQUEST_ORIGIN, _REQUEST_TENANT_ID
     headers = event.get("headers") or {}
     origin = (headers.get("origin") or headers.get("Origin") or "").strip().rstrip("/")
     rows = _tenant_origin_rows()
     allowed = {ALLOWED_ORIGIN} | {o for _, o, _ in rows if o}
     _REQUEST_ORIGIN = origin if origin and origin in allowed else ALLOWED_ORIGIN
-    _REQUEST_TENANT_ID = 1
+    _REQUEST_TENANT_ID = 1 if (not origin or _is_shared_host(origin)) else None
     if origin:
         for tid, o, _slug in rows:
             if o and o == origin:
@@ -258,7 +278,25 @@ def lambda_handler(event, context):
         if data.get("website"):
             print(f"Bot detected - honeypot triggered")
             return response(400, {"error": "Invalid submission"})
-        
+
+        # Which shop is this intake for? FAIL CLOSED (see resolve_request):
+        # an unrecognized Origin -> 403; an unknown/inactive ?tenant= slug ->
+        # 400. Neither may silently file the submission under Brooklyn Bikery.
+        # Precedence: a shop's own Origin pins the tenant; on the shared host
+        # the slug (public — it's in the shop's URL) selects the shop.
+        tenant_id = _REQUEST_TENANT_ID
+        if tenant_id is None:
+            print("⛔ Intake from unrecognized origin refused")
+            return response(403, {"error": "Unknown shop origin"})
+        req_slug = (data.get("tenant") or "").strip().lower()
+        if req_slug:
+            slug_tid = tenant_id_for_slug(req_slug)
+            if not slug_tid:
+                print(f"⛔ Intake for unknown shop slug {req_slug!r} refused")
+                return response(400, {"error": "Unknown shop"})
+            if tenant_id == 1:
+                tenant_id = slug_tid
+
         # Validate all inputs
         validated_data, errors = validate_input(data)
         if errors:
@@ -293,16 +331,6 @@ def lambda_handler(event, context):
             print(f"DB connection error: {e}")
             return response(500, {"error": "Service temporarily unavailable"})
         
-        # Tenant precedence: the Origin (browser-enforced, primary path) wins;
-        # if the Origin didn't pin a specific shop (shared host -> tenant 1), a
-        # ?tenant= slug in the form may select an active shop. The slug is public
-        # (it's in the shop's URL) and submitting intake to a shop is not
-        # sensitive, so this is safe.
-        tenant_id = _REQUEST_TENANT_ID
-        if tenant_id == 1:
-            slug_tid = tenant_id_for_slug(data.get("tenant"))
-            if slug_tid:
-                tenant_id = slug_tid
         try:
             with connection.cursor() as cursor:
                 # Check if customer already exists by phone — SCOPED to this

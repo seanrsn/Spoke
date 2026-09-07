@@ -91,11 +91,35 @@ box, or inside the VPC.
 | bikery-admin-password[-staging] | BB admin login |
 | bikery-admin-password-<slug> | other shops' logins (created by provisioning) |
 | twilio-credentials[-staging] | BB / test Twilio auth tokens |
+| bikery-twilio-<slug> | a shop's own Twilio (sub)account auth token; its ARN goes in `tenants.twilio_auth_token_secret_arn` |
 | bikery-vapid-keys | web push |
 
 **Password reset for a shop:** `aws secretsmanager put-secret-value
 --secret-id bikery-admin-password-<slug> --secret-string '{"password":"<new>"}'`
 then tell the owner. (No self-service reset yet — known gap.)
+
+## Tenant config + Twilio webhooks (multi-tenant)
+
+- Lambdas cache each shop's `tenants` row for 5 min (`TENANT_CACHE_TTL`
+  env). After editing a shop's Twilio number/token/status, allow up to 5 min
+  (or redeploy) for warm containers to pick it up.
+- Twilio webhooks (inbound texts, delivery-status callbacks) are validated
+  with the token of the shop they are FOR: status callbacks via the
+  `?msgRowId=` message row, inbound by matching `To` against
+  `tenants.twilio_from_number`. A shop with no token configured gets 403, so
+  set `twilio_from_number` + `twilio_auth_token_secret_arn` TOGETHER and point
+  the shop's number at the same Admin API webhook URL. When a shop's texts
+  "disappear", look for `Webhook tenant N (by ...)` and `signature validation
+  failed for tenant N` in the AdminDashboard logs.
+- Tenant resolution fails closed everywhere: an unknown login slug, a token
+  without a tenant claim, or an intake with an unknown `?tenant=` / from an
+  unrecognized Origin is refused rather than filed under Brooklyn Bikery. If a
+  real shop reports "Unknown shop" or a 403 on intake, check `tenants.status`,
+  the slug, and that `allowed_origin` exactly matches their site's origin
+  (scheme + host, no trailing slash).
+- Migrations: `python migrations/run_migration.py <file>` targets prod; set
+  `BIKERY_DB_SECRET=bikeshop-credentials-staging` to run against staging.
+  Staging first, always. Pending: `008_drop_tenant_id_defaults.sql`.
 
 ## Per-shop domains (when bluewrenchhq.com is purchased)
 
