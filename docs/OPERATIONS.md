@@ -59,7 +59,7 @@ box, or inside the VPC.
 
 - **Everything goes through the gate.** Any push that targets prod
   (`main`, `claude/**`, PRs) first deploys the same code to the -staging
-  stack and runs `tests/staging_integration.py` (15 tests). Prod jobs run only
+  stack and runs `tests/staging_integration.py` (14 tests). Prod jobs run only
   if the gate is green. Pushes to `staging` branch deploy staging only.
 - Pipeline is serialized (`concurrency: deploy-pipeline`).
 - Rollback: `git revert` the bad commit and push — the revert goes through
@@ -119,7 +119,8 @@ then tell the owner. (No self-service reset yet — known gap.)
   (scheme + host, no trailing slash).
 - Migrations: `python migrations/run_migration.py <file>` targets prod; set
   `BIKERY_DB_SECRET=bikeshop-credentials-staging` to run against staging.
-  Staging first, always. Pending: `008_drop_tenant_id_defaults.sql`.
+  Staging first, always. `008_drop_tenant_id_defaults.sql`: applied to
+  staging 2026-09-12; pending on prod (apply right after the next promotion).
 
 ## Per-shop domains (when bluewrenchhq.com is purchased)
 

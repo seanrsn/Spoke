@@ -26,7 +26,7 @@ Last updated: 2026-09-07.
 - ✅ **Self-service password change** for a logged-in admin.
 - ✅ **Per-tenant CSV export** (customers / orders / messages).
 - ✅ **Gated deploys** — prod deploys only after the staging integration suite
-  passes (15/15, run in-VPC via the test bridge).
+  passes (14/14, run in-VPC via the test bridge).
 - ✅ **Docs** — ONBOARDING, A2P-10DLC, OPERATIONS runbooks; ToS/Privacy drafts.
 
 ## Environment state (IMPORTANT)
@@ -50,12 +50,13 @@ push:
   through to tenant 1 unless the request is genuinely for the shared host.
 - **Tenant config cache TTL (5 min)** so Twilio/status edits take effect on
   warm containers without a redeploy (`TENANT_CACHE_TTL` env overrides).
-- **Migration 008** (drop the `DEFAULT '1'` bridge on `tenant_id`) — written,
-  **not yet applied** to staging or prod. Apply staging first:
+- **Migration 008** (drop the `DEFAULT '1'` bridge on `tenant_id`) — **applied
+  to staging 2026-09-12** (suite 14/14 afterwards), **not yet applied to prod**.
+  Staging command, for the record:
   `BIKERY_DB_SECRET=bikeshop-credentials-staging python migrations/run_migration.py migrations/008_drop_tenant_id_defaults.sql`
   then prod (no env var). The code does not depend on it either way; it makes
   a future unscoped INSERT fail loudly instead of filing under tenant 1.
-- Suite is 15 tests (was 13): + `test_webhook_per_tenant_validation`,
+- Suite is 14 tests (was 12): + `test_webhook_per_tenant_validation`,
   `test_fail_closed`.
 
 **Promote this before the first real shop.** To promote: merge `staging`
