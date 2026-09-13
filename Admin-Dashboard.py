@@ -85,9 +85,35 @@ def cors_headers():
     }
 
 
+import datetime as _dt
+from decimal import Decimal as _Decimal
+
+def _json_default(o):
+    """Last line of defense for json.dumps: DB temporal/Decimal values that a
+    handler forgot to convert become strings/floats instead of a 500. Anything
+    else still raises, exactly like plain json.dumps."""
+    if isinstance(o, (_dt.datetime, _dt.date, _dt.time)):
+        return str(o)
+    if isinstance(o, _Decimal):
+        return float(o)
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
 def response(status, body):
     """Helper to format API Gateway response with CORS headers"""
-    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
+    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body, default=_json_default)}
+
+def _db_row_jsonable(d: dict) -> dict:
+    """Make a DB row JSON-safe in place: datetime/date/time -> str (the same
+    'YYYY-MM-DD[ HH:MM:SS]' text the dashboard already parses), Decimal -> float.
+    Use this on every SELECT * row: a column added by a migration otherwise
+    reaches json.dumps unconverted and 500s the whole endpoint (that is how
+    customers.sms_consent_at from migration 006 killed the Customers tab)."""
+    for k, v in d.items():
+        if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+            d[k] = str(v)
+        elif isinstance(v, _Decimal):
+            d[k] = float(v)
+    return d
 
 # ============================================
 # SECRETS MANAGEMENT
@@ -1356,26 +1382,18 @@ def lambda_handler(event, context):
             cursor = conn.cursor()
 
             # Customers (tenant-scoped)
+            # SELECT * means every column a migration adds lands here, so
+            # convert temporal/Decimal values GENERICALLY (_db_row_jsonable).
+            # Hand-picking columns is exactly how sms_consent_at (migration
+            # 006) made this endpoint 500 and killed the Customers tab.
             cursor.execute("SELECT * FROM customers WHERE tenant_id = %s ORDER BY id DESC", (tid,))
             cust_cols = [desc[0] for desc in cursor.description]
-            customers = [dict(zip(cust_cols, row)) for row in cursor.fetchall()]
-            for r in customers:
-                if r.get('date_created'):
-                    r['date_created'] = str(r['date_created'])
+            customers = [_db_row_jsonable(dict(zip(cust_cols, row))) for row in cursor.fetchall()]
 
             # Orders (tenant-scoped)
-            from decimal import Decimal
             cursor.execute("SELECT * FROM orders WHERE tenant_id = %s ORDER BY id ASC", (tid,))
             ord_cols = [desc[0] for desc in cursor.description]
-            orders = []
-            for row in cursor.fetchall():
-                d = dict(zip(ord_cols, row))
-                if d.get('date_of_service'):
-                    d['date_of_service'] = str(d['date_of_service'])
-                for k, v in list(d.items()):
-                    if isinstance(v, Decimal):
-                        d[k] = float(v) if v is not None else None
-                orders.append(d)
+            orders = [_db_row_jsonable(dict(zip(ord_cols, row))) for row in cursor.fetchall()]
 
             cursor.close()
             conn.close()

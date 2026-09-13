@@ -779,11 +779,41 @@ def test_fail_closed():
         conn.close()
 
 
+def test_customers_tab_with_consented_customer():
+    """Regression: the Customers tab (get-db-tables) 500'd whenever ANY customer
+    had sms_consent_at set. Migration 006 added that datetime column and the
+    handler (SELECT *) only stringified date_created, so json.dumps blew up on
+    the first consented customer — prod had 3, staging 2, tab dead in both.
+    Create a consented customer, then assert the tab loads and every temporal
+    value comes back as a plain string."""
+    P = "+15005550177"  # throwaway (Twilio magic-number range)
+    pw = _secret(STAGING["admin_pw_secret"])["password"]
+    _, b = _http(STAGING["admin_api"] + "/AdminDashboard", {"action": "login", "password": pw})
+    conn = _db()
+    try:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM customers WHERE phone=%s AND tenant_id=1", (P,))
+            c.execute("INSERT INTO customers (tenant_id, name, phone, date_created, sms_consent, sms_consent_at) "
+                      "VALUES (1, 'Consent Regression', %s, CURDATE(), 1, NOW())", (P,))
+        sc, data = _http(STAGING["admin_api"] + "/AdminDashboard", {"action": "get-db-tables"}, b["token"])
+        assert sc == 200, f"get-db-tables returned {sc} with a consented customer present (temporal serialization regression)"
+        mine = next((r for r in data["customers"]["rows"] if r.get("phone") == P), None)
+        assert mine, "consented test customer missing from the Customers tab payload"
+        for col in ("date_created", "sms_consent_at"):
+            assert isinstance(mine.get(col), str) and mine[col], f"{col} not serialized as string: {mine.get(col)!r}"
+        return f"Customers tab 200 with a consented customer; sms_consent_at={mine['sms_consent_at']}"
+    finally:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM customers WHERE phone=%s AND tenant_id=1", (P,))
+        conn.close()
+
+
 TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
          test_sms_cannot_deliver, test_tenant_isolation, test_login_returns_shop,
          test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status,
          test_public_intake_tenant_routing, test_change_password, test_spoke_pricing_data_driven,
-         test_webhook_per_tenant_validation, test_fail_closed]
+         test_webhook_per_tenant_validation, test_fail_closed,
+         test_customers_tab_with_consented_customer]
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")
