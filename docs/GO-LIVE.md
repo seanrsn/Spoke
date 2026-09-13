@@ -26,7 +26,7 @@ Last updated: 2026-09-07.
 - ✅ **Self-service password change** for a logged-in admin.
 - ✅ **Per-tenant CSV export** (customers / orders / messages).
 - ✅ **Gated deploys** — prod deploys only after the staging integration suite
-  passes (14/14, run in-VPC via the test bridge).
+  passes (15/15, run in-VPC via the test bridge).
 - ✅ **Docs** — ONBOARDING, A2P-10DLC, OPERATIONS runbooks; ToS/Privacy drafts.
 
 ## Environment state (IMPORTANT)
@@ -56,10 +56,16 @@ push:
   `BIKERY_DB_SECRET=bikeshop-credentials-staging python migrations/run_migration.py migrations/008_drop_tenant_id_defaults.sql`
   then prod (no env var). The code does not depend on it either way; it makes
   a future unscoped INSERT fail loudly instead of filing under tenant 1.
-- Suite is 14 tests (was 12): + `test_webhook_per_tenant_validation`,
+- Suite is 15 tests (was 12): + `test_webhook_per_tenant_validation`,
   `test_fail_closed`.
 
-**Promote this before the first real shop.** To promote: merge `staging`
+- **Customers-tab fix (2026-09-13).** `get-db-tables` 500'd whenever any
+  customer had `sms_consent_at` set; prod has 3 such customers, so the prod
+  Customers tab is broken until this is promoted. Regression test
+  `test_customers_tab_with_consented_customer` added.
+
+**Promote this before the first real shop** (and soon regardless — it
+carries the prod Customers-tab fix). To promote: merge `staging`
 into `main` (or push a `claude/**` branch) → the prod gate runs the suite on
 staging → prod deploys. **Do not push to prod without the owner's explicit
 go** (repo rule).

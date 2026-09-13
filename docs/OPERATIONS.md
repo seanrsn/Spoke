@@ -59,7 +59,7 @@ box, or inside the VPC.
 
 - **Everything goes through the gate.** Any push that targets prod
   (`main`, `claude/**`, PRs) first deploys the same code to the -staging
-  stack and runs `tests/staging_integration.py` (14 tests). Prod jobs run only
+  stack and runs `tests/staging_integration.py` (15 tests). Prod jobs run only
   if the gate is green. Pushes to `staging` branch deploy staging only.
 - Pipeline is serialized (`concurrency: deploy-pipeline`).
 - Rollback: `git revert` the bad commit and push — the revert goes through

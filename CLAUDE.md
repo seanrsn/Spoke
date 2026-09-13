@@ -17,12 +17,19 @@ Where we are on multi-tenancy / BlueWrench pilot readiness:
 - **Prod = `main` = `33ba8ac` (2026-07-30).** Multi-tenant steps 1–9 are live.
 - **`staging` is 2 commits ahead of `main`**: `eaf0877` (pre-pilot hardening:
   per-shop Twilio webhook validation, fail-closed tenant resolution, 5-min
-  tenant cache TTL, migration 008 written, 2 new tests → 14) and `cf44e8b`
+  tenant cache TTL, migration 008 written, 2 new tests) and `cf44e8b`
   (CI fix: the staging test job had silently skipped on every staging push).
   Both 2026-09-07. Deployed to the staging stack only; both Actions runs
   green. **NOT promoted to prod** — waiting on the owner's explicit go.
+- **Customers-tab bug (2026-09-13), fixed on staging, LIVE IN PROD:** the
+  dashboard's Customers tab 500s ("Failed to load customers") as soon as ANY
+  customer has `sms_consent_at` set — `get-db-tables` did `SELECT *` and only
+  stringified `date_created`. Prod has 3 such customers, so the tab is dead in
+  prod today. Fixed in Admin-Dashboard.py (`_db_row_jsonable` + json default
+  in `response()`), regression test added → suite is 15 tests. **Promoting
+  staging fixes this in prod.**
 - **Migration 008** (drop `DEFAULT '1'` on `tenant_id`) is APPLIED on
-  staging (2026-09-12; suite 14/14 afterwards). NOT yet applied to prod — do
+  staging (2026-09-12; suite 15/15 afterwards). NOT yet applied to prod — do
   it right after promotion. Code doesn't depend on it either way.
 - **AWS creds (IAM user Dommy) restored on this desktop 2026-09-12** via
   `aws configure import` from the IAM CSV. This is a SECOND access key; the
@@ -39,7 +46,8 @@ Next steps, in order:
    log services + invoice box, Messages, Services, CSV; `?tenant=nope` login
    must be refused).
 2. Promote: merge `staging` → `main` and push. The prod gate re-runs the
-   14-test suite on the staging stack, then prod deploys. **Owner must say go**
+   15-test suite on the staging stack, then prod deploys. This ALSO fixes the
+   live prod Customers-tab bug above. **Owner must say go**
    (repo rule: desktop Claude never pushes unasked).
 3. Apply 008 to prod after step 2 is green:
    `python migrations/run_migration.py migrations/008_drop_tenant_id_defaults.sql`
@@ -61,7 +69,11 @@ Session log:
 - 2026-09-12: re-oriented after a lost session. No code changes. Added this
   block. Pushed staging (run 34735156217 green). Restored AWS creds; applied
   008 to staging; ran the suite locally afterwards: 14/14. Corrected the test
-  count (docs said 15; the suite has 14 functions and reports 14/14).
+  count (docs said 15; the suite had 14 functions).
+- 2026-09-13: owner's staging click-through found the Customers tab 500ing.
+  Root-caused to unconverted `sms_consent_at` datetime in `get-db-tables`
+  (prod affected too). Fixed + regression test (15 tests), verified 15/15 on
+  staging, pushed staging.
 
 **Keep this block current.** Update it at the end of every session that
 changes branch state, deploys, migrations, or tenants.
@@ -134,7 +146,7 @@ snapshot), `pywebpush-layer.zip`, `spoke-repo.tar.gz`. All `.gitignore`d.
 1. **`prepare` job**: claude/* pushes auto-merge into main (PRs squash-merge).
 2. **`prod-gate` job (prod targets only)**: deploys the exact same code to the
    -staging Lambdas + staging site, then runs `tests/staging_integration.py`
-   (14 tests incl. wrong-order regression, tenant isolation, per-shop webhook
+   (15 tests incl. wrong-order regression, tenant isolation, per-shop webhook
    validation, fail-closed tenant resolution, SMS compliance).
    **Prod jobs run only if this is green.**
 3. **`deploy-lambdas` / `deploy-frontend` jobs**: package `.py` files → Lambdas;
