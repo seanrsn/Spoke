@@ -25,6 +25,13 @@
 --     data lives in `order_services` now. First IRREVERSIBLE migration —
 --     restore from the `pre-multitenant-step6-2026-05-25` RDS snapshot if
 --     rollback is required.
+--   005_add_invoice_footer.sql                (2026-06) — tenants.invoice_footer
+--   006_sms_consent_optout.sql                (2026-06) — customers SMS consent /
+--     opt-out columns; messages delivery status + twilio_sid.
+--   007_spoke_additional_unit_price.sql       (2026-07) — per-shop spoke pricing.
+--   008_drop_tenant_id_defaults.sql           (2026-09-07) — dropped the
+--     DEFAULT '1' bridge from tenant_id on customers, orders, messages,
+--     push_subscriptions (fail loudly instead of filing under tenant 1).
 
 CREATE DATABASE IF NOT EXISTS `bikeshop`
   DEFAULT CHARACTER SET utf8mb4
@@ -35,10 +42,9 @@ USE `bikeshop`;
 -- ----------------------------------------------------------------------------
 -- tenants — per-shop config. Brooklyn Bikery is tenant_id = 1.
 --
--- The DEFAULT '1' on tenant_id columns in other tables is a temporary bridge
--- for the multi-tenant migration (lets pre-multi-tenant Lambda code keep
--- inserting without specifying tenant_id). Removed in step 10, before any
--- second tenant is provisioned.
+-- tenant_id on every domain table is NOT NULL with NO default (migration 008):
+-- an INSERT that forgets the tenant fails loudly instead of silently filing
+-- the row under Brooklyn Bikery.
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE `tenants` (
@@ -54,6 +60,7 @@ CREATE TABLE `tenants` (
   `twilio_from_number` varchar(20) NOT NULL,
   `sms_sender_name` varchar(50) NOT NULL,
   `admin_password_secret_arn` varchar(255) NOT NULL,
+  `invoice_footer` text,
   `status` enum('active','suspended') NOT NULL DEFAULT 'active',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -67,7 +74,7 @@ CREATE TABLE `tenants` (
 
 CREATE TABLE `customers` (
   `id` int NOT NULL AUTO_INCREMENT,
-  `tenant_id` int NOT NULL DEFAULT '1',
+  `tenant_id` int NOT NULL,
   `name` varchar(100) DEFAULT NULL,
   `phone` varchar(20) DEFAULT NULL,
   `date_created` date DEFAULT NULL,
@@ -84,7 +91,7 @@ CREATE TABLE `customers` (
 
 CREATE TABLE `orders` (
   `id` int NOT NULL AUTO_INCREMENT,
-  `tenant_id` int NOT NULL DEFAULT '1',
+  `tenant_id` int NOT NULL,
   `customer_id` int DEFAULT NULL,
   `date_of_service` date DEFAULT NULL,
   `bike_description` varchar(255) DEFAULT NULL,
@@ -155,7 +162,7 @@ CREATE TABLE `order_services` (
 
 CREATE TABLE `messages` (
   `id` bigint NOT NULL AUTO_INCREMENT,
-  `tenant_id` int NOT NULL DEFAULT '1',
+  `tenant_id` int NOT NULL,
   `phone` varchar(20) NOT NULL,
   `direction` enum('inbound','outbound') NOT NULL,
   `body` text NOT NULL,
@@ -178,7 +185,7 @@ CREATE TABLE `messages` (
 
 CREATE TABLE `push_subscriptions` (
   `id` int NOT NULL AUTO_INCREMENT,
-  `tenant_id` int NOT NULL DEFAULT '1',
+  `tenant_id` int NOT NULL,
   `endpoint` varchar(500) NOT NULL,
   `p256dh` varchar(255) NOT NULL,
   `auth` varchar(255) NOT NULL,

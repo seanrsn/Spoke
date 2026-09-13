@@ -388,7 +388,10 @@ jobs:
     # Only after a STAGING deploy. Never runs for prod. A failure here is your
     # signal NOT to promote the change to main. The centerpiece is the
     # wrong-order regression test that guards the order-corruption bug class.
-    if: needs.prepare.outputs.target == 'staging'
+    # !failure() && !cancelled() is REQUIRED: prod-gate is skipped on staging
+    # pushes, and a skipped ancestor makes the implicit success() false, which
+    # silently skipped this job on every staging push until 2026-09-07.
+    if: ${{ !failure() && !cancelled() && needs.prepare.outputs.target == 'staging' && needs.deploy-lambdas.result == 'success' && needs.deploy-frontend.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

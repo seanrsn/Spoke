@@ -33,7 +33,9 @@ python provision_tenant.py \
 
 This creates the admin-password secret, the tenants row, seeds the service
 catalog from the bike-shop template, and registers the shop's origin in the
-API Gateway CORS allow-lists.
+API Gateway CORS allow-lists. `--allowed-origin` must be the exact origin the
+shop's pages will be served from (scheme + host, no trailing slash) — intake
+from any other origin is refused (403), never filed under Brooklyn Bikery.
 
 Then set the invoice footer (until there's a UI for it):
 
@@ -70,7 +72,10 @@ Follow `A2P-10DLC.md`. Summary:
 - [ ] Create the auth-token secret (`bikery-twilio-<slug>`) if using a Twilio
       subaccount, else reuse the main account's secret ARN
 - [ ] Update the tenants row: `twilio_account_sid`,
-      `twilio_auth_token_secret_arn`, `twilio_from_number`, `sms_sender_name`
+      `twilio_auth_token_secret_arn`, `twilio_from_number`, `sms_sender_name`.
+      Set the number AND the token-secret ARN together: the shop's inbound
+      texts + delivery receipts are validated with THAT shop's token and
+      refused (403) until it exists. Edits take effect within 5 min (cache).
 - [ ] Point the number's inbound webhook at the Admin API URL
       (`https://rqshavktfa.execute-api.us-east-1.amazonaws.com/stage/AdminDashboard`)
 - [ ] Send a test invoice to YOUR phone from their tenant; confirm delivery,

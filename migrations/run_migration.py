@@ -4,7 +4,8 @@ Run a SQL migration file against the bikeshop RDS instance.
 Usage:
     python run_migration.py <path-to-migration.sql>
 
-Reads RDS credentials from Secrets Manager (`bikeshop-credentials`), parses the
+Reads RDS credentials from Secrets Manager (`bikeshop-credentials`, or the secret
+named by env BIKERY_DB_SECRET — use bikeshop-credentials-staging for staging), parses the
 SQL file into statements, and executes them one at a time inside a transaction.
 On any error, the transaction rolls back and the script exits non-zero.
 
@@ -15,6 +16,7 @@ that's a human-verified safety check before running.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -26,7 +28,7 @@ import pymysql
 def get_db_creds() -> dict:
     """Pull MySQL connection info from Secrets Manager."""
     sm = boto3.client("secretsmanager", region_name="us-east-1")
-    resp = sm.get_secret_value(SecretId="bikeshop-credentials")
+    resp = sm.get_secret_value(SecretId=os.environ.get("BIKERY_DB_SECRET", "bikeshop-credentials"))
     return json.loads(resp["SecretString"])
 
 

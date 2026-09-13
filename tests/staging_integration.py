@@ -92,11 +92,15 @@ def _db():
                                cursorclass=pymysql.cursors.DictCursor, autocommit=True, connect_timeout=10)
     return _BridgeConn()
 
-def _mint_jwt():
+def _mint_jwt(tenant_id=1):
+    """Mint a test JWT. tenant_id=None omits the claim (to prove fail-closed)."""
     secret = _secret(STAGING["jwt_secret"])["secret"]
     def b64(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
     h = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    p = b64(json.dumps({"sub": "staging-integration-test", "exp": int(time.time()) + 600}).encode())
+    claims = {"sub": "staging-integration-test", "exp": int(time.time()) + 600}
+    if tenant_id is not None:
+        claims["tenant_id"] = tenant_id
+    p = b64(json.dumps(claims).encode())
     s = b64(hmac.new(secret.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest())
     return f"{h}.{p}.{s}"
 
@@ -152,12 +156,26 @@ def _invoke_admin_webhook(form, signature, row_id):
     out = json.loads(r["Payload"].read())
     return out.get("statusCode")
 
-def _invoke_backend(payload):
+def _invoke_backend(payload, token=None):
     event = {"httpMethod": "POST", "requestContext": {"http": {"method": "POST"}},
-             "headers": {"Authorization": f"Bearer {_mint_jwt()}"}, "body": json.dumps(payload)}
+             "headers": {"Authorization": f"Bearer {token or _mint_jwt()}"}, "body": json.dumps(payload)}
     r = lam.invoke(FunctionName=STAGING["backend_fn"], Payload=json.dumps(event).encode())
     out = json.loads(r["Payload"].read())
     return out.get("statusCode"), out
+
+def _invoke_intake(origin, form_fields):
+    """POST the PUBLIC intake form (form-encoded) as a browser on `origin` would."""
+    import urllib.parse as _up
+    event = {"httpMethod": "POST", "requestContext": {"http": {"method": "POST"}},
+             "headers": {"origin": origin, "content-type": "application/x-www-form-urlencoded"},
+             "body": _up.urlencode(form_fields), "isBase64Encoded": False}
+    r = lam.invoke(FunctionName=STAGING["customer_fn"], Payload=json.dumps(event).encode())
+    out = json.loads(r["Payload"].read())
+    return out.get("statusCode")
+
+def _twilio_sign(auth_token, url, form):
+    signing = url + "".join(f"{k}{v}" for k, v in sorted(form.items()))
+    return base64.b64encode(hmac.new(auth_token.encode(), signing.encode(), hashlib.sha1).digest()).decode()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tests
@@ -207,8 +225,8 @@ def test_wrong_order_regression():
             if leftovers:
                 print(f"    (cleaned {len(leftovers)} ITEST_ residue row(s) from an interrupted run)")
             today = time.strftime("%Y-%m-%d")
-            c.execute("INSERT INTO customers (name,phone,date_created) VALUES ('ITEST_A',%s,%s)", (A_PHONE, today)); cidA = c.lastrowid
-            c.execute("INSERT INTO customers (name,phone,date_created) VALUES ('ITEST_B',%s,%s)", (B_PHONE, today)); cidB = c.lastrowid
+            c.execute("INSERT INTO customers (tenant_id,name,phone,date_created) VALUES (1,'ITEST_A',%s,%s)", (A_PHONE, today)); cidA = c.lastrowid
+            c.execute("INSERT INTO customers (tenant_id,name,phone,date_created) VALUES (1,'ITEST_B',%s,%s)", (B_PHONE, today)); cidB = c.lastrowid
             c.execute("INSERT INTO orders (tenant_id,customer_id,date_of_service,backend_notes) VALUES (1,%s,%s,'A0')", (cidA, today)); oidA = c.lastrowid
             c.execute("INSERT INTO orders (tenant_id,customer_id,date_of_service,backend_notes) VALUES (1,%s,%s,'B0')", (cidB, today)); oidB = c.lastrowid  # newest
 
@@ -636,10 +654,166 @@ def test_spoke_pricing_data_driven():
         conn.close()
 
 
+def test_webhook_per_tenant_validation():
+    """A Twilio webhook is validated with the token of the shop it is FOR
+    (resolved from the ?msgRowId= message row, else the shop's Twilio number),
+    never with Brooklyn Bikery's. Guards the per-shop Twilio subaccount model:
+    a shop with NO token configured gets 403 (fail closed) instead of being
+    validated — and filed — under tenant 1; a configured shop's callbacks and
+    inbound texts land under THAT shop. Uses two throwaway tenants inserted
+    with fresh ids (never in any warm container's tenant cache)."""
+    conn = _db()
+    with conn.cursor() as c:
+        c.execute("SELECT twilio_account_sid, twilio_auth_token_secret_arn FROM tenants WHERE id=1")
+        t1 = c.fetchone()
+    tok = _secret(t1["twilio_auth_token_secret_arn"])
+    bb_token = tok.get("auth_token") or tok.get("authToken")
+    NOTOK_NUM, OK_NUM, CUST = "+15005550077", "+15005550078", "+15005550079"
+    url_base = f"{STAGING['admin_api']}/AdminDashboard"
+    ids = {}
+
+    def status_cb(row_id, from_num):
+        form = {"MessageSid": f"SMitest{row_id:026d}", "MessageStatus": "delivered",
+                "From": from_num, "To": CUST}
+        sig = _twilio_sign(bb_token, f"{url_base}?msgRowId={row_id}", form)
+        return _invoke_admin_webhook(form, sig, row_id)
+
+    def inbound(to_num, body):
+        form = {"MessageSid": f"SMitestin{int(time.time())}", "From": CUST, "To": to_num, "Body": body}
+        sig = _twilio_sign(bb_token, url_base, form)
+        return _invoke_admin_webhook(form, sig, None)
+
+    def msg_status(row_id):
+        with conn.cursor() as c:
+            c.execute("SELECT status FROM messages WHERE id=%s", (row_id,))
+            return c.fetchone()["status"]
+
+    try:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM messages WHERE to_number IN (%s,%s) OR from_number=%s", (NOTOK_NUM, OK_NUM, CUST))
+            c.execute("DELETE FROM tenants WHERE slug IN ('itest-notoken','itest-token')")
+            c.execute("SELECT COALESCE(MAX(id),0)+1 AS nid FROM tenants")
+            nid = c.fetchone()["nid"]
+            cols = ("(id,slug,display_name,allowed_origin,twilio_account_sid,twilio_auth_token_secret_arn,"
+                    "twilio_from_number,sms_sender_name,admin_password_secret_arn,status)")
+            # Shop A: freshly provisioned, SMS not registered yet -> no token.
+            c.execute(f"INSERT INTO tenants {cols} VALUES (%s,'itest-notoken','ITest NoToken',"
+                      f"'https://itest-notoken.example.com','','',%s,'ITest','','active')", (nid, NOTOK_NUM))
+            ids["a"] = nid
+            # Shop B: configured with its own number + (staging's) token secret.
+            c.execute(f"INSERT INTO tenants {cols} VALUES (%s,'itest-token','ITest Token',"
+                      f"'https://itest-token.example.com',%s,%s,%s,'ITest','','active')",
+                      (nid + 1, t1["twilio_account_sid"], t1["twilio_auth_token_secret_arn"], OK_NUM))
+            ids["b"] = nid + 1
+            for key, tid, num in (("ma", ids["a"], NOTOK_NUM), ("mb", ids["b"], OK_NUM), ("m1", 1, "+15005550006")):
+                c.execute("INSERT INTO messages (tenant_id, phone, direction, body, status, from_number, to_number) "
+                          "VALUES (%s,%s,'outbound','per-tenant webhook test','queued',%s,%s)", (tid, CUST, num, CUST))
+                ids[key] = c.lastrowid
+
+        # 1. Shop A has no token: its callback must be REFUSED, not validated with BB's token.
+        sc = status_cb(ids["ma"], NOTOK_NUM)
+        assert sc == 403, f"callback for a no-token shop should be 403, got {sc}"
+        assert msg_status(ids["ma"]) == "queued", "no-token shop's row was updated via BB's token!"
+        # 2. ...and so must an inbound text to its number.
+        sc = inbound(NOTOK_NUM, "hello shop A")
+        assert sc == 403, f"inbound for a no-token shop should be 403, got {sc}"
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) AS n FROM messages WHERE direction='inbound' AND to_number=%s", (NOTOK_NUM,))
+            assert c.fetchone()["n"] == 0, "inbound text for a no-token shop was stored!"
+        # 3. Shop B is configured: its callback validates with ITS token and updates ITS row.
+        sc = status_cb(ids["mb"], OK_NUM)
+        assert sc == 200, f"callback for a configured shop should be 200, got {sc}"
+        assert msg_status(ids["mb"]) == "delivered", "configured shop's row not updated"
+        # 4. Inbound text to shop B's number files under shop B.
+        sc = inbound(OK_NUM, "hello shop B")
+        assert sc == 200, f"inbound for a configured shop should be 200, got {sc}"
+        with conn.cursor() as c:
+            c.execute("SELECT tenant_id FROM messages WHERE direction='inbound' AND to_number=%s", (OK_NUM,))
+            rows = c.fetchall()
+            assert rows and all(r["tenant_id"] == ids["b"] for r in rows), f"inbound misfiled: {rows}"
+        # 5. Control: Brooklyn Bikery's own callback still works while other shops exist.
+        sc = status_cb(ids["m1"], "+15005550006")
+        assert sc == 200 and msg_status(ids["m1"]) == "delivered", "BB's own callback broke"
+        return "no-token shop: callback+inbound 403 (fail closed); configured shop: validated + filed under itself; BB unaffected"
+    finally:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM messages WHERE to_number IN (%s,%s,%s) OR from_number=%s", (NOTOK_NUM, OK_NUM, CUST, CUST))
+            c.execute("DELETE FROM tenants WHERE slug IN ('itest-notoken','itest-token')")
+        conn.close()
+
+
+def test_fail_closed():
+    """No path may silently fall back to Brooklyn Bikery when a tenant WAS
+    specified but is unknown: login with an unknown slug -> 401 (never a BB
+    session); a token without a tenant claim -> 401 on admin AND backend;
+    public intake with an unknown ?tenant= slug -> 400 and from an unknown
+    Origin -> 403, with nothing filed."""
+    admin = STAGING["admin_api"] + "/AdminDashboard"
+    bb_pw = _secret(STAGING["admin_pw_secret"])["password"]
+    sc, b = _http(admin, {"action": "login", "tenant": "no-such-shop-xyz", "password": bb_pw})
+    assert sc == 401 and not b.get("token"), f"unknown slug must not log into BB: {sc} {b}"
+
+    bare = _mint_jwt(tenant_id=None)
+    sc, _ = _http(admin, {"action": "get-db-tables"}, bare)
+    assert sc == 401, f"admin: token without tenant claim should be 401, got {sc}"
+    sc, _ = _invoke_backend({"lookupPhone": "+15005550000", "isNewCustomer": False,
+                             "services": [], "notes": ""}, token=bare)
+    assert sc == 401, f"backend: token without tenant claim should be 401, got {sc}"
+
+    P = str(int(time.time()) + 7)
+    conn = _db()
+    try:
+        fields = {"name": "Fail Closed", "phone": P, "notes": "itest", "serviceConsent": "on"}
+        sc = _invoke_intake("https://staging.brooklynbikery.com", {**fields, "tenant": "no-such-shop-xyz"})
+        assert sc == 400, f"intake with unknown slug should be 400, got {sc}"
+        sc = _invoke_intake("https://evil-not-a-shop.example.com", fields)
+        assert sc == 403, f"intake from unknown origin should be 403, got {sc}"
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM customers WHERE phone=%s", (P,))
+            assert c.fetchone() is None, "refused intake was still filed!"
+        return "unknown slug login 401; claimless token 401 (admin+backend); intake unknown slug 400 / unknown origin 403"
+    finally:
+        with conn.cursor() as c:
+            c.execute("DELETE o FROM orders o JOIN customers cu ON cu.id=o.customer_id WHERE cu.phone=%s", (P,))
+            c.execute("DELETE FROM customers WHERE phone=%s", (P,))
+        conn.close()
+
+
+def test_customers_tab_with_consented_customer():
+    """Regression: the Customers tab (get-db-tables) 500'd whenever ANY customer
+    had sms_consent_at set. Migration 006 added that datetime column and the
+    handler (SELECT *) only stringified date_created, so json.dumps blew up on
+    the first consented customer — prod had 3, staging 2, tab dead in both.
+    Create a consented customer, then assert the tab loads and every temporal
+    value comes back as a plain string."""
+    P = "+15005550177"  # throwaway (Twilio magic-number range)
+    pw = _secret(STAGING["admin_pw_secret"])["password"]
+    _, b = _http(STAGING["admin_api"] + "/AdminDashboard", {"action": "login", "password": pw})
+    conn = _db()
+    try:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM customers WHERE phone=%s AND tenant_id=1", (P,))
+            c.execute("INSERT INTO customers (tenant_id, name, phone, date_created, sms_consent, sms_consent_at) "
+                      "VALUES (1, 'Consent Regression', %s, CURDATE(), 1, NOW())", (P,))
+        sc, data = _http(STAGING["admin_api"] + "/AdminDashboard", {"action": "get-db-tables"}, b["token"])
+        assert sc == 200, f"get-db-tables returned {sc} with a consented customer present (temporal serialization regression)"
+        mine = next((r for r in data["customers"]["rows"] if r.get("phone") == P), None)
+        assert mine, "consented test customer missing from the Customers tab payload"
+        for col in ("date_created", "sms_consent_at"):
+            assert isinstance(mine.get(col), str) and mine[col], f"{col} not serialized as string: {mine.get(col)!r}"
+        return f"Customers tab 200 with a consented customer; sms_consent_at={mine['sms_consent_at']}"
+    finally:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM customers WHERE phone=%s AND tenant_id=1", (P,))
+        conn.close()
+
+
 TESTS = [test_login_and_auth, test_data_isolation, test_wrong_order_regression,
          test_sms_cannot_deliver, test_tenant_isolation, test_login_returns_shop,
          test_new_customer_flow, test_send_invoice_flag, test_sms_compliance_and_status,
-         test_public_intake_tenant_routing, test_change_password, test_spoke_pricing_data_driven]
+         test_public_intake_tenant_routing, test_change_password, test_spoke_pricing_data_driven,
+         test_webhook_per_tenant_validation, test_fail_closed,
+         test_customers_tab_with_consented_customer]
 
 def main():
     print("Running staging integration tests against the -staging stack...\n")
